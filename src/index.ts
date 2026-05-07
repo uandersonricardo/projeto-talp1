@@ -1,1 +1,22 @@
-console.log("TALP 1");
+import "dotenv/config";
+
+import { auditorAgent } from "./agents/auditor/agent.ts";
+import { coderAgent } from "./agents/coder/agent.ts";
+import { testerAgent } from "./agents/tester/agent.ts";
+
+const requirements = ["ERC20 token", "pausable", "ownable"];
+
+const coderResult = await coderAgent.invoke({ requirements });
+console.log("======= Coder =======");
+console.log(coderResult.contract);
+
+const auditorResult = await auditorAgent.invoke({ solidityFile: coderResult.contract });
+console.log("\n======= Auditor =======");
+console.log(auditorResult.vulnerabilities);
+
+const testerResult = await testerAgent.invoke({
+  solidityFiles: [coderResult.contract],
+  vulnerability: auditorResult.vulnerabilities[0] ?? {},
+});
+console.log("\n======= Tester =======");
+console.log(testerResult.results);
