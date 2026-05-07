@@ -1,0 +1,28 @@
+{
+  "name": "projeto-talp1",
+  "version": "0.0.1",
+  "description": "Projeto de TALP 1",
+  "main": "dist/index.js",
+  "scripts": {
+    "test": "vitest",
+    "coverage": "vitest run --coverage",
+    "build": "tsc",
+    "start": "npm run build && node dist/index.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/uandersonricardo/projeto-talp1.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/uandersonricardo/projeto-talp1/issues"
+  },
+  "homepage": "https://github.com/uandersonricardo/projeto-talp1#readme",
+  "devDependencies": {
+    "@biomejs/biome": "2.4.14",
+    "@types/node": "^25.6.0",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.5"
+  }
+}
