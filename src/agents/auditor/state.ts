@@ -1,7 +1,7 @@
-import { MessagesValue, ReducedValue, StateSchema } from "@langchain/langgraph";
+import { StateSchema } from "@langchain/langgraph";
 import { z } from "zod";
 
-export const MessagesState = new StateSchema({
-  messages: MessagesValue,
-  llmCalls: new ReducedValue(z.number().default(0), { reducer: (x, y) => x + y }),
+export const AuditorState = new StateSchema({
+  solidityFile: z.string().default(""),
+  vulnerabilities: z.array(z.record(z.string(), z.any())).default([]),
 });
