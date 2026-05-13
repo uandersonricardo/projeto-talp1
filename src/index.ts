@@ -12,11 +12,11 @@ console.log(coderResult.contract);
 
 const auditorResult = await auditorAgent.invoke({ solidityFile: coderResult.contract });
 console.log("\n======= Auditor =======");
-console.log(auditorResult.vulnerabilities);
+console.log(auditorResult.findings);
 
 const testerResult = await testerAgent.invoke({
   solidityFiles: [coderResult.contract],
-  vulnerability: auditorResult.vulnerabilities[0] ?? {},
+  vulnerability: auditorResult.findings[0] ?? {},
 });
 console.log("\n======= Tester =======");
 console.log(testerResult.results);
