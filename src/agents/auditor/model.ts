@@ -1,5 +1,5 @@
-import { ChatOpenRouter } from "@langchain/openrouter";
+import { ChatAnthropic } from "@langchain/anthropic";
 
-export const auditorModel = new ChatOpenRouter({
-  model: "moonshotai/kimi-k2.6",
+export const auditorModel = new ChatAnthropic({
+  model: "claude-sonnet-4-6",
 });
