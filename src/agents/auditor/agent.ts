@@ -18,6 +18,7 @@ import {
   MAX_SOL_CHARS,
   SKIP_DIRS,
   SOL_EXT,
+  SOL_TEST_SUFFIXES,
 } from "./config.ts";
 
 const walkDirectory = (dir: string, depth: number, solFiles: string[], docFiles: string[]) => {
@@ -41,7 +42,8 @@ const walkDirectory = (dir: string, depth: number, solFiles: string[], docFiles:
       const base = path.basename(entry.name, ext).toLowerCase();
 
       if (ext === SOL_EXT) {
-        solFiles.push(fullPath);
+        const isTest = SOL_TEST_SUFFIXES.some((suffix) => entry.name.endsWith(suffix));
+        if (!isTest) solFiles.push(fullPath);
       } else if (DOC_EXTS.has(ext) || DOC_BASENAMES.has(base)) {
         docFiles.push(fullPath);
       }
