@@ -22,8 +22,10 @@ export const CriticSchema = z.object({
 });
 
 export const AuditorState = new StateSchema({
+  repoPath: z.string().default(""),
   solidityFile: z.string().default(""),
   scope: z.array(z.string()).default([]),
+  docs: z.array(z.string()).default([]),
   repoContext: z.string().default(""),
   candidateFindings: z.array(FindingSchema).default([]),
   criticReviews: z.array(CriticSchema).default([]),

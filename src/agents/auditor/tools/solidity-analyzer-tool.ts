@@ -434,7 +434,7 @@ const generateMarkdown = (imports: string[], contracts: ContractAnalysis[]) => {
   return lines.join("\n");
 };
 
-const analyzeSolidityFile = async (soliditySource: string, mode: "full" | "short") => {
+export const analyzeSolidityFile = async (soliditySource: string, mode: "full" | "short") => {
   let ast: any;
 
   try {

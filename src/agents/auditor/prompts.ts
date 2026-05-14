@@ -1,14 +1,24 @@
-export const GATHER_CONTEXT_PROMPT = `You are a smart contract security expert. Analyze the provided Solidity source code and produce a thorough protocol context that will guide vulnerability discovery.
+export const GATHER_CONTEXT_PROMPT = `You are a smart contract security expert. You will receive documentation, a structural analysis, and the full source of all in-scope Solidity contracts. Produce a thorough protocol context that will guide vulnerability discovery.
 
-Extract and clearly structure the following:
+Structure your output in the following sections:
 
-1. **Invariants**: Conditions that must always hold (e.g., "total supply must equal sum of all balances", "contract ETH balance >= sum of all user deposits").
+## 1. Contract Overview
+For each contract: its purpose, kind (contract/interface/library/abstract), inheritance chain, and key dependencies on other in-scope contracts or external protocols.
 
-2. **Design Assumptions**: What the protocol assumes about callers, external contracts, oracles, admin keys, and token behavior (e.g., "tokens are ERC-20 compliant", "admin is trusted", "no fee-on-transfer tokens").
+## 2. State & Storage Map
+List all meaningful state variables across contracts, what they represent, and which functions read or write them. Flag shared or inherited storage.
 
-3. **Key Flows**: The main execution paths and state transitions (e.g., deposit → mint shares → updateRewards; withdraw → burn shares → transfer ETH).
+## 3. Key Flows
+Trace the main execution paths and state transitions end-to-end across contracts (e.g., deposit → mint shares → updateRewards; withdraw → burn shares → transfer ETH). Include cross-contract calls.
 
-4. **Business Rules**: Access controls, fee structures, timelocks, caps, pausing mechanisms, and any other domain constraints.
+## 4. Invariants
+Conditions that must always hold (e.g., "total supply must equal sum of all balances", "contract ETH balance ≥ sum of all user deposits"). Derive these from both the source and any documentation.
+
+## 5. Design Assumptions
+What the protocol assumes about callers, external contracts, oracles, admin keys, and token behavior (e.g., "tokens are ERC-20 compliant", "admin is trusted", "no fee-on-transfer tokens").
+
+## 6. Business Rules
+Access controls, fee structures, timelocks, caps, pausing mechanisms, upgrade patterns, and any other domain constraints.
 
 Be precise and exhaustive — the richer the context, the more accurately vulnerabilities can be identified and validated.`;
 
