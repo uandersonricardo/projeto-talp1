@@ -8,7 +8,7 @@ import { z } from "zod";
 import { logger } from "../../logger.ts";
 import { judgeFindingsModel, findVulnerabilitiesModel, gatherContextModel } from "./model.ts";
 import { JUDGE_FINDINGS_PROMPT, FIND_VULNERABILITIES_PROMPT, GATHER_CONTEXT_PROMPT } from "./prompts.ts";
-import { AuditorState, ReviewSchema, PartialFindingSchema } from "./state.ts";
+import { AuditorState, JudgeReviewSchema, CandidateFindingSchema } from "./state.ts";
 import { analyzeSolidityFile } from "./tools/solidity-analyzer-tool.ts";
 import { buildRepoTree } from "./tools/repo-tree-tool.ts";
 import {
@@ -91,11 +91,6 @@ const gatherContext: GraphNode<typeof AuditorState> = async (state) => {
     solidityEntries.push({ filePath, source, analysis });
   }
 
-  // Concatenate all sources for downstream vulnerability phases
-  const solidityFile = solidityEntries
-    .map(({ filePath, source }) => `// === FILE: ${filePath} ===\n${source}`)
-    .join("\n\n");
-
   // Read documentation files
   const docEntries: { filePath: string; content: string }[] = [];
   for (const filePath of state.docs) {
@@ -123,38 +118,61 @@ const gatherContext: GraphNode<typeof AuditorState> = async (state) => {
     parts.push(`### ${filePath}\n\`\`\`solidity\n${source}\n\`\`\``);
   }
 
-  // const model = gatherContextModel.withStructuredOutput(z.object({ context: z.string() }));
-  // const result = await model.invoke([new SystemMessage(GATHER_CONTEXT_PROMPT), new HumanMessage(parts.join("\n\n"))]);
+  const model = gatherContextModel.withStructuredOutput(z.object({ context: z.string() }));
+  const result = await model.invoke([new SystemMessage(GATHER_CONTEXT_PROMPT), new HumanMessage(parts.join("\n\n"))]);
 
   logger.info(`gatherContext: context built (${parts.join("\n\n").length} chars)`);
   logger.debug(`gatherContext: full context:\n${parts.join("\n\n")}`);
 
-  return { solidityFile, repoContext: parts.join("\n\n") };
+  return { repoContext: result.context };
 };
 
 const findVulnerabilities: GraphNode<typeof AuditorState> = async (state) => {
-  const model = findVulnerabilitiesModel.withStructuredOutput(z.object({ findings: z.array(PartialFindingSchema) }));
+  const model = findVulnerabilitiesModel.withStructuredOutput(z.object({ findings: z.array(CandidateFindingSchema) }));
 
-  let userMessage = `Contract:\n\n${state.solidityFile}\n\nProtocol Context:\n${state.repoContext}`;
+  const previousFeedback =
+    state.judgeReviews.length > 0
+      ? state.judgeReviews
+          .map((r, i) => {
+            const title = state.candidateFindings[i]?.title ?? `Finding ${i + 1}`;
+            return `- "${title}": ${r.isFalsePositive ? "FALSE POSITIVE" : "TRUE POSITIVE"}\n  Judge: ${r.review}`;
+          })
+          .join("\n")
+      : null;
 
-  if (state.judgeReviews.length > 0) {
-    const feedback = state.judgeReviews
-      .map(
-        (r) => `- "${r /*.title*/}": ${r.isFalsePositive ? "FALSE POSITIVE" : "TRUE POSITIVE"}\n  Judge: ${r.review}`,
-      )
-      .join("\n");
-    userMessage += `\n\nJudge feedback from previous iteration (iteration ${state.reflectionCount}):\n${feedback}\n\nRevise your findings accordingly.`;
-  }
+  logger.info(
+    `findVulnerabilities: invoking LLM for ${state.scope.length} file(s) in parallel (iteration ${state.reflectionCount + 1})`,
+  );
 
-  logger.info(`findVulnerabilities: invoking LLM (iteration ${state.reflectionCount + 1})`);
-  logger.debug(`findVulnerabilities: user message:\n${userMessage}`);
+  const allFindings = await Promise.all(
+    state.scope.map(async (filePath) => {
+      let source: string;
+      try {
+        source = fs.readFileSync(filePath, "utf-8").slice(0, MAX_SOL_CHARS);
+      } catch {
+        return [];
+      }
+      if (!source) return [];
 
-  const result = await model.invoke([new SystemMessage(FIND_VULNERABILITIES_PROMPT), new HumanMessage(userMessage)]);
+      let userMessage = `Contract (${filePath}):\n\n${source}\n\nProtocol Context:\n${state.repoContext}`;
+      if (previousFeedback) {
+        userMessage += `\n\nJudge feedback from previous iteration (iteration ${state.reflectionCount}):\n${previousFeedback}\n\nRevise your findings accordingly.`;
+      }
 
-  logger.info(`findVulnerabilities: LLM returned ${result.findings.length} candidate finding(s)`);
-  logger.debug(`findVulnerabilities: findings:\n${JSON.stringify(result.findings, null, 2)}`);
+      logger.debug(`findVulnerabilities: processing ${filePath}`);
+      const result = await model.invoke([
+        new SystemMessage(FIND_VULNERABILITIES_PROMPT),
+        new HumanMessage(userMessage),
+      ]);
+      return result.findings.map((finding: any) => ({ ...finding, path: filePath, location: "1-14" }));
+    }),
+  );
 
-  return { candidateFindings: result.findings.map((finding: any) => ({ ...finding, path: "/", location: "1-14" })) };
+  const candidateFindings = allFindings.flat();
+  logger.info(`findVulnerabilities: LLM returned ${candidateFindings.length} total candidate finding(s)`);
+  logger.debug(`findVulnerabilities: findings:\n${JSON.stringify(candidateFindings, null, 2)}`);
+
+  return { candidateFindings };
 };
 
 const judgeFindings: GraphNode<typeof AuditorState> = async (state) => {
@@ -167,39 +185,52 @@ const judgeFindings: GraphNode<typeof AuditorState> = async (state) => {
     };
   }
 
-  const model = findVulnerabilitiesModel.withStructuredOutput(z.object({ reviews: z.array(ReviewSchema) }));
+  const model = judgeFindingsModel.withStructuredOutput(JudgeReviewSchema);
 
-  const findingsText = state.candidateFindings
-    .map(
-      (f, i) =>
-        `[Finding ${i + 1}] ${f.title}\nSeverity: ${f.severity}\nDescription: ${f.description}\nLocation: ${f.path} lines ${f.location}\nCode:\n\`\`\`solidity\n${f.codeSnippet}\n\`\`\``,
-    )
-    .join("\n\n---\n\n");
+  logger.info(`judgeFindings: reviewing ${state.candidateFindings.length} candidate finding(s) in parallel`);
 
-  logger.info(`judgeFindings: reviewing ${state.candidateFindings.length} candidate finding(s)`);
-  logger.debug(`judgeFindings: findings text:\n${findingsText}`);
+  const reviews = await Promise.all(
+    state.candidateFindings.map(async (finding, i) => {
+      let source: string;
+      try {
+        source = fs.readFileSync(finding.path, "utf-8").slice(0, MAX_SOL_CHARS);
+      } catch {
+        source = "";
+      }
 
-  const result = await model.invoke([
-    new SystemMessage(JUDGE_FINDINGS_PROMPT),
-    new HumanMessage(
-      `Contract:\n\n${state.solidityFile}\n\nProtocol Context:\n${state.repoContext}\n\nCandidate Findings to Review:\n\n${findingsText}`,
-    ),
-  ]);
+      const findingText = `[Finding ${i + 1}] ${finding.title}\nSeverity: ${finding.severity}\nDescription: ${finding.description}\nLocation: ${finding.path} lines ${finding.location}\nCode:\n\`\`\`solidity\n${finding.codeSnippet}\n\`\`\``;
 
-  const reviewsByTitle = new Map(result.reviews.map((r: any) => [r.findingTitle.toLowerCase(), r]));
+      logger.debug(`judgeFindings: reviewing finding ${i + 1}: ${finding.title}`);
+      return model.invoke([
+        new SystemMessage(JUDGE_FINDINGS_PROMPT),
+        new HumanMessage(
+          `Contract (${finding.path}):\n\n${source}\n\nProtocol Context:\n${state.repoContext}\n\nFinding to Review:\n\n${findingText}`,
+        ),
+      ]);
+    }),
+  );
 
-  const confirmedFindings = state.candidateFindings.filter((f, i) => {
-    const review = reviewsByTitle.get(f.title.toLowerCase()) ?? result.reviews[i];
-    return review ? !review.isFalsePositive : true;
-  });
+  const confirmedEntries = state.candidateFindings
+    .map((finding, i) => ({ finding, review: reviews[i] }))
+    .filter(({ review }) => !review.isFalsePositive);
 
-  const falsePositiveCount = state.candidateFindings.length - confirmedFindings.length;
-  logger.info(`judgeFindings: ${confirmedFindings.length} confirmed, ${falsePositiveCount} false positive(s)`);
-  logger.debug(`judgeFindings: reviews:\n${JSON.stringify(result.reviews, null, 2)}`);
+  const findings = confirmedEntries.map(({ finding, review }) => ({
+    ...finding,
+    judgeReview: {
+      review: review.review,
+      confidence: review.confidence,
+      exploitablePaths: review.exploitablePaths,
+    },
+  }));
+
+  const falsePositiveCount = state.candidateFindings.length - findings.length;
+
+  logger.info(`judgeFindings: ${findings.length} confirmed, ${falsePositiveCount} false positive(s)`);
+  logger.debug(`judgeFindings: reviews:\n${JSON.stringify(reviews, null, 2)}`);
 
   return {
-    judgeReviews: result.reviews,
-    findings: confirmedFindings,
+    judgeReviews: reviews,
+    findings,
     reflectionCount: state.reflectionCount + 1,
   };
 };

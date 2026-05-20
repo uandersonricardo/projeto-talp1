@@ -5,9 +5,9 @@ export const gatherContextModel = new ChatAnthropic({
 });
 
 export const findVulnerabilitiesModel = new ChatAnthropic({
-  model: "claude-sonnet-4-6",
+  model: "claude-haiku-4-5",
 });
 
 export const judgeFindingsModel = new ChatAnthropic({
-  model: "claude-sonnet-4-6",
+  model: "claude-haiku-4-5",
 });
