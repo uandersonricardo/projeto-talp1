@@ -10,6 +10,7 @@ import { judgeFindingsModel, findVulnerabilitiesModel, gatherContextModel } from
 import { JUDGE_FINDINGS_PROMPT, FIND_VULNERABILITIES_PROMPT, GATHER_CONTEXT_PROMPT } from "./prompts.ts";
 import { AuditorState, ReviewSchema, PartialFindingSchema } from "./state.ts";
 import { analyzeSolidityFile } from "./tools/solidity-analyzer-tool.ts";
+import { buildRepoTree } from "./tools/repo-tree-tool.ts";
 import {
   DOC_BASENAMES,
   DOC_EXTS,
@@ -60,11 +61,14 @@ const defineScope: GraphNode<typeof AuditorState> = async (state) => {
 
   walkDirectory(state.repoPath, 0, solFiles, docFiles);
 
+  const fileTree = buildRepoTree(state.repoPath);
+
   logger.info(`defineScope: found ${solFiles.length} Solidity file(s), ${docFiles.length} doc file(s)`);
   logger.debug(`defineScope: Solidity files: ${JSON.stringify(solFiles)}`);
   logger.debug(`defineScope: doc files: ${JSON.stringify(docFiles)}`);
+  logger.debug(`defineScope: file tree:\n${fileTree}`);
 
-  return { scope: solFiles, docs: docFiles };
+  return { scope: solFiles, docs: docFiles, fileTree };
 };
 
 const gatherContext: GraphNode<typeof AuditorState> = async (state) => {

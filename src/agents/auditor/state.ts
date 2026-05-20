@@ -31,6 +31,7 @@ export const AuditorState = new StateSchema({
   solidityFile: z.string().default(""),
   scope: z.array(z.string()).default([]),
   docs: z.array(z.string()).default([]),
+  fileTree: z.string().default(""),
   repoContext: z.string().default(""),
   candidateFindings: z.array(FindingSchema).default([]),
   judgeReviews: z.array(ReviewSchema).default([]),
