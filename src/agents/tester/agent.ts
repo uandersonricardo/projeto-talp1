@@ -1,13 +1,35 @@
-import { END, type GraphNode, START, StateGraph } from "@langchain/langgraph";
+import { StateGraph, END, START } from "@langchain/langgraph";
+import { PoCStateAnnotation, PoCState } from "./state.js";
 
-import { TesterState } from "./state.ts";
+async function oracleNode(state: PoCState): Promise<Partial<PoCState>> {
+  console.log("[oracleNode] stub — report recebido:", state.report.id);
+  return {};
+}
 
-const runTests: GraphNode<typeof TesterState> = async (_state) => {
-  return { results: [] };
-};
+async function generatePoCNode(state: PoCState): Promise<Partial<PoCState>> {
+  console.log("[generatePoCNode] stub — iteração:", state.iterations);
+  return { iterations: 1 };
+}
 
-export const testerAgent = new StateGraph(TesterState)
-  .addNode("runTests", runTests)
-  .addEdge(START, "runTests")
-  .addEdge("runTests", END)
-  .compile();
+async function runFoundryNode(state: PoCState): Promise<Partial<PoCState>> {
+  console.log("[runFoundryNode] stub");
+  return { status: "success" };
+}
+
+async function reflectNode(state: PoCState): Promise<Partial<PoCState>> {
+  console.log("[reflectNode] stub");
+  return {};
+}
+
+const graph = new StateGraph(PoCStateAnnotation)
+  .addNode("oracleNode", oracleNode)
+  .addNode("generatePoCNode", generatePoCNode)
+  .addNode("runFoundryNode", runFoundryNode)
+  .addNode("reflectNode", reflectNode)
+  .addEdge(START, "oracleNode")
+  .addEdge("oracleNode", "generatePoCNode")
+  .addEdge("generatePoCNode", "runFoundryNode")
+  .addEdge("runFoundryNode", "reflectNode")
+  .addEdge("reflectNode", END);
+
+export const testerAgent = graph.compile();

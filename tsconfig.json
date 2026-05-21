@@ -8,7 +8,7 @@
     "outDir": "./dist",
     "moduleResolution": "nodenext",
     "module": "nodenext",
-    "target": "esnext",
+    "target": "ES2022",
     "types": [
       "node"
     ],
