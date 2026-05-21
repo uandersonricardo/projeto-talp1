@@ -1,19 +1,11 @@
 import { END, type GraphNode, START, StateGraph } from "@langchain/langgraph";
-import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
 
 import { CoderState } from "./state.ts";
 import { solidityCoderPrompt, solidityFixPrompt, solidityReviewPrompt } from "./prompts.ts";
 import { compileSolidityTool } from "./tools/compile-solidity.ts";
+import { createLLM } from "../../config/llm.ts";
 
 const MAX_FIX_ATTEMPTS = 3;
-
-function createLLM() {
-  return new ChatGoogleGenerativeAI({
-    apiKey: process.env.GOOGLE_API_KEY || "",
-    model: process.env.MODEL_NAME || "gemini-2.5-flash",
-    temperature: 0.2,
-  });
-}
 
 /**
  * Extrai apenas o bloco de código Solidity de uma resposta do LLM.
