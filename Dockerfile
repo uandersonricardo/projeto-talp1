@@ -22,7 +22,7 @@ WORKDIR /app
 
 COPY package.json package-lock.json* ./
 COPY patches/ ./patches/
-RUN npm install --omit=dev
+RUN npm install --omit=dev --ignore-scripts
 
 COPY --from=backend-build /app/dist ./dist
 COPY --from=frontend-build /app/frontend/dist ./frontend/dist
