@@ -1,3 +1,18 @@
+export interface Finding {
+  title: string;
+  description: string;
+  recommendation: string;
+  severity: "high" | "medium" | "low";
+  codeSnippet: string;
+  location: string;
+  path: string;
+  judgeReview: {
+    review: string;
+    confidence: number;
+    exploitablePaths: string[];
+  };
+}
+
 export interface VulnerabilityReport {
   id: string;
   severity: "critical" | "high" | "medium" | "low";
@@ -10,6 +25,9 @@ export interface VulnerabilityReport {
   };
   attackVector: string;
   suggestedCheatcodes?: string[];
+  codeSnippet?: string;
+  location?: string;
+  exploitablePaths?: string[];
 }
 
 export interface OracleContext {

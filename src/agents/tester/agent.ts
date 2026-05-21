@@ -1,9 +1,16 @@
 import { StateGraph, END, START } from "@langchain/langgraph";
 import { PoCStateAnnotation, PoCState } from "./state.js";
+import { generateLocalScaffold } from "./tools/scaffoldGenerator.js";
+import { OracleContext } from "./types.js";
 
 async function oracleNode(state: PoCState): Promise<Partial<PoCState>> {
-  console.log("[oracleNode] stub — report recebido:", state.report.id);
-  return {};
+  console.log("[oracleNode] gerando scaffold para:", state.report.title);
+
+  const solidityScaffold = generateLocalScaffold(state.report);
+  const oracleContext: OracleContext = { solidityScaffold };
+
+  console.log("[oracleNode] scaffold gerado, tamanho:", solidityScaffold.length, "chars");
+  return { oracleContext };
 }
 
 async function generatePoCNode(state: PoCState): Promise<Partial<PoCState>> {
