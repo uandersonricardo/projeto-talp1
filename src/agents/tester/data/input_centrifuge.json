@@ -1,0 +1,16 @@
+{
+  "title": "Escrow mismatch in LiquidityPool due to price changes during epoch execution",
+  "description": "The LiquidityPool contract relies on an external InvestmentManager to process deposits and mints. When an investor requests a deposit, their assets are locked. During the epoch execution, if the tranche token price changes significantly, the amount of shares to be minted (TokenShares) may exceed the available balance in the Escrow contract, causing subsequent collection transactions (mint/deposit) to revert for some users while others succeed.",
+  "recommendation": "Ensure the Escrow contract is always sufficiently funded by validating price impacts before final execution or implement a more robust collection mechanism that handles partial fills or explicit failure states when Escrow is empty.",
+  "severity": "high",
+  "codeSnippet": "function deposit(uint256 assets, address receiver) public withApproval(receiver) returns (uint256 shares) {\n    shares = investmentManager.processDeposit(receiver, assets);\n    emit Deposit(address(this), receiver, assets, shares);\n}",
+  "location": "L148-L151",
+  "path": "contracts/LiquidityPool.sol",
+  "judgeReview": {
+    "review": "Confirmed valid finding. The vulnerability occurs when multiple investors deposit at different prices within the same logic flow. If the price in the second epoch is higher/lower than expected, the calculation of total shares needed in Escrow might be incorrect, leading to a denial of service (revert) for users trying to collect their shares after the price update.",
+    "confidence": 0.95,
+    "exploitablePaths": [
+      "User A deposits 100 assets at price 1.25 -> User B deposits 100 assets at price 2.0 -> Price updates -> User A collects successfully -> User B tries to collect but Escrow is empty -> Transaction reverts."
+    ]
+  }
+}
