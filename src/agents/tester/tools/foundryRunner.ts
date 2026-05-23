@@ -1,6 +1,7 @@
 import { exec } from "child_process";
 import { promisify } from "util";
-import { writeFile } from "fs/promises";
+import { writeFile, access } from "fs/promises";
+import { join } from "path";
 
 const execAsync  = promisify(exec);
 const SANDBOX    = "/tmp/poc-sandbox";
@@ -14,7 +15,22 @@ export interface FoundryResult {
   timedOut: boolean;
 }
 
+/**
+ * Garante que o sandbox Foundry existe e está inicializado.
+ */
+async function ensureSandbox() {
+  try {
+    await access(join(SANDBOX, "foundry.toml"));
+  } catch {
+    console.log("[foundryRunner] Sandbox não encontrado. Inicializando...");
+    // Caminho absoluto para o script de setup (assume execução da raiz do projeto)
+    await execAsync("./scripts/setup-sandbox.sh");
+  }
+}
+
 export async function runFoundry(solidityCode: string): Promise<FoundryResult> {
+  await ensureSandbox();
+  
   // Escrever o arquivo no sandbox
   await writeFile(`${SANDBOX}/test/Exploit.t.sol`, solidityCode, "utf-8");
 
