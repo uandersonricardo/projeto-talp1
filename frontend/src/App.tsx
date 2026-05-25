@@ -1,10 +1,25 @@
 import { useState, useRef, useCallback } from "react";
 
+interface Finding {
+  title: string;
+  description: string;
+  recommendation: string;
+  severity: "high" | "medium" | "low";
+  codeSnippet: string;
+  location: string;
+  path: string;
+  judgeReview: {
+    review: string;
+    confidence: number;
+    exploitablePaths: string[];
+  };
+}
+
 interface AgentResult {
   contract?: string;
   compilationErrors?: string[];
   reviewSummary?: string;
-  vulnerabilities?: Array<{ type: string; severity: string; description: string }>;
+  findings?: Finding[];
   results?: unknown[];
 }
 
@@ -58,8 +73,10 @@ export function App() {
         for (const line of lines) {
           if (line.startsWith("event:")) {
             currentEvent = line.slice(6).trim();
+            console.log("event", currentEvent);
           } else if (line.startsWith("data:")) {
             const data = line.slice(5).trim();
+            console.log("data", data);
             switch (currentEvent) {
               case "log":
                 appendLog(data);
@@ -90,12 +107,10 @@ export function App() {
   return (
     <div style={styles.container}>
       <header style={styles.header}>
-        <h1 style={styles.title}>
-          Multi-Agent: Geração, Auditoria e Teste de Smart Contracts
-        </h1>
+        <h1 style={styles.title}>Multi-Agent: Geração, Auditoria e Teste de Smart Contracts</h1>
         <p style={styles.subtitle}>
-          Descreva um cenário ou requisito cuja solução seja um smart contract em Solidity.
-          O sistema irá gerar, compilar, auditar e testar o contrato automaticamente.
+          Descreva um cenário ou requisito cuja solução seja um smart contract em Solidity. O sistema irá gerar,
+          compilar, auditar e testar o contrato automaticamente.
         </p>
       </header>
 
@@ -103,15 +118,21 @@ export function App() {
         <textarea
           value={requirements}
           onChange={(e) => setRequirements(e.target.value)}
-          placeholder={"Ex: Crie um token ERC20 com as seguintes características:\n- Nome: MeuToken, Símbolo: MTK\n- Supply inicial de 1.000.000 tokens\n- Funções de mint (apenas owner) e burn\n- Pausável pelo owner"}
+          placeholder={
+            "Ex: Crie um token ERC20 com as seguintes características:\n- Nome: MeuToken, Símbolo: MTK\n- Supply inicial de 1.000.000 tokens\n- Funções de mint (apenas owner) e burn\n- Pausável pelo owner"
+          }
           style={styles.textarea}
           rows={6}
           disabled={running}
         />
-        <button type="submit" disabled={running || !requirements.trim()} style={{
-          ...styles.button,
-          opacity: running || !requirements.trim() ? 0.5 : 1,
-        }}>
+        <button
+          type="submit"
+          disabled={running || !requirements.trim()}
+          style={{
+            ...styles.button,
+            opacity: running || !requirements.trim() ? 0.5 : 1,
+          }}
+        >
           {running ? "Executando pipeline..." : "Executar Pipeline"}
         </button>
       </form>
@@ -122,7 +143,9 @@ export function App() {
           <h2 style={styles.sectionTitle}>📋 Log de Execução</h2>
           <div style={styles.logBox}>
             {logs.map((log, i) => (
-              <div key={i} style={styles.logLine}>{log}</div>
+              <div key={i} style={styles.logLine}>
+                {log}
+              </div>
             ))}
             <div ref={logsEndRef} />
           </div>
@@ -163,9 +186,33 @@ export function App() {
       {auditorResult && (
         <section style={styles.section}>
           <h2 style={styles.sectionTitle}>🔍 Agente Auditor</h2>
-          <div style={styles.codeBox}>
-            <pre style={styles.code}>{JSON.stringify(auditorResult.vulnerabilities, null, 2)}</pre>
-          </div>
+          {auditorResult.findings && auditorResult.findings.length > 0 ? (
+            auditorResult.findings.map((f, i) => (
+              <div key={i} style={{ ...styles.findingCard, borderColor: severityColor(f.severity) }}>
+                <div style={styles.findingHeader}>
+                  <span style={{ ...styles.severityBadge, background: severityColor(f.severity) }}>
+                    {f.severity.toUpperCase()}
+                  </span>
+                  <span style={styles.findingTitle}>{f.title}</span>
+                </div>
+                <p style={styles.findingText}>{f.description}</p>
+                <p style={{ ...styles.findingText, color: "#94a3b8" }}>
+                  <strong>Localização:</strong> {f.location ?? "-"}
+                </p>
+                {f.codeSnippet && <pre style={styles.code}>{f.codeSnippet}</pre>}
+                <p style={{ ...styles.findingText, color: "#94a3b8" }}>
+                  <strong>Recomendação:</strong> {f.recommendation}
+                </p>
+                <p style={{ ...styles.findingText, color: "#64748b", fontSize: 12 }}>
+                  Confiança: {Math.round(f.judgeReview.confidence)}% — {f.judgeReview.review}
+                </p>
+              </div>
+            ))
+          ) : (
+            <div style={styles.resultBox}>
+              <p style={styles.resultText}>Nenhuma vulnerabilidade encontrada.</p>
+            </div>
+          )}
         </section>
       )}
 
@@ -185,6 +232,19 @@ export function App() {
     </div>
   );
 }
+
+const severityColor = (severity: string) => {
+  switch (severity) {
+    case "high":
+      return "#ef4444";
+    case "medium":
+      return "#f97316";
+    case "low":
+      return "#eab308";
+    default:
+      return "#64748b";
+  }
+};
 
 const styles: Record<string, React.CSSProperties> = {
   container: {
@@ -304,5 +364,37 @@ const styles: Record<string, React.CSSProperties> = {
     lineHeight: 1.6,
     color: "#cbd5e1",
     whiteSpace: "pre-wrap",
+  },
+  findingCard: {
+    background: "#1e293b",
+    border: "1px solid",
+    borderRadius: 8,
+    padding: 16,
+    marginBottom: 12,
+  },
+  findingHeader: {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    marginBottom: 8,
+  },
+  severityBadge: {
+    fontSize: 11,
+    fontWeight: 700,
+    color: "#fff",
+    padding: "2px 8px",
+    borderRadius: 4,
+    letterSpacing: "0.05em",
+  },
+  findingTitle: {
+    fontSize: 15,
+    fontWeight: 600,
+    color: "#f8fafc",
+  },
+  findingText: {
+    margin: "4px 0",
+    fontSize: 13,
+    lineHeight: 1.6,
+    color: "#cbd5e1",
   },
 };

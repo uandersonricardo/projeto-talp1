@@ -19,6 +19,8 @@ O sistema é implementado em **TypeScript** e **Node.js**, utilizando a bibliote
 
 O sistema é composto por agentes especializados que colaboram entre si em diferentes etapas do processo:
 
+![Arquitetura Geral](./assets/architecture.png)
+
 1. **Exploração e análise dos requisitos**
 
    * Processamento e compreensão dos documentos fornecidos;
