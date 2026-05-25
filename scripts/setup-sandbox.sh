@@ -2,9 +2,13 @@
 set -e
 
 SANDBOX="/tmp/poc-sandbox"
-FORGE_BIN="$HOME/.foundry/bin/forge"
 
-echo "Inicializando sandbox Foundry em $SANDBOX..."
+# Tenta encontrar forge no PATH se a variável não estiver definida ou falhar
+if [ -z "$FORGE_BIN" ] || [ ! -f "$FORGE_BIN" ]; then
+    FORGE_BIN=$(which forge || echo "forge")
+fi
+
+echo "Inicializando sandbox Foundry em $SANDBOX usando $FORGE_BIN..."
 rm -rf "$SANDBOX"
 mkdir -p "$SANDBOX"
 cd "$SANDBOX"

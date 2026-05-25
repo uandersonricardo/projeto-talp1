@@ -24,7 +24,9 @@ Seja preciso e exaustivo — quanto mais rico o contexto, com mais precisão as 
 
 export const FIND_VULNERABILITIES_PROMPT = `Você é um auditor especialista em segurança de smart contracts com foco em Solidity. Analise sistematicamente o código-fonte do contrato e o contexto do protocolo para identificar vulnerabilidades de segurança.
 
-Para cada vulnerabilidade, forneça TODOS os seguintes campos:
+Sua resposta deve ser um objeto JSON contendo uma lista de achados sob a chave "findings".
+
+Para cada vulnerabilidade em "findings", forneça TODOS os seguintes campos:
 
 - **title**: Nome curto e preciso (ex.: "Reentrância em withdraw", "Controle de acesso ausente em setFee").
 - **description**: Explique o comportamento ESPERADO versus o comportamento OBSERVADO (vulnerável) em 2 a 4 frases.
@@ -38,7 +40,9 @@ Se feedback do juiz de uma iteração anterior for fornecido, remova os falsos p
 
 export const JUDGE_FINDINGS_PROMPT = `Você é um revisor rigoroso de segurança de smart contracts. Avalie cada vulnerabilidade candidata submetida pelo auditor e determine se é um verdadeiro positivo ou um falso positivo.
 
-Para cada achado, forneça TODOS os seguintes campos:
+Sua resposta deve ser um objeto JSON contendo a revisão sob a chave "review_result".
+
+Para o achado fornecido, preencha os seguintes campos em "review_result":
 
 - **review**: Análise detalhada (3 a 6 frases) explicando por que a vulnerabilidade é ou não real. Referencie código específico, invariantes do protocolo, pré-condições e controles mitigadores.
 - **isFalsePositive**: true se o achado NÃO for explorável na prática; false se for uma vulnerabilidade real.

@@ -12,7 +12,7 @@ import { analyzeFoundryLog } from "./utils/logAnalyzer.js";
 const MAX_ITERATIONS = 5;
 
 const llm = new ChatOpenRouter({
-  model: "deepseek/deepseek-v4-flash",
+  model: process.env.OPENROUTER_MODEL || "deepseek/deepseek-v4-flash",
   temperature: 0.2,
   apiKey: process.env.OPENROUTER_API_KEY,
 });
@@ -57,7 +57,7 @@ Scaffold (complete APENAS test_Exploit):
 ${oracleContext!.solidityScaffold}
 \`\`\``;
 
-  console.log(`[generatePoCNode] iteração ${iterations + 1}, isRetry=${isRetry}`);
+  console.log(`[testerAgent] generatePoCNode iteração ${iterations + 1}, isRetry=${isRetry}`);
 
   try {
     const response = await llm.invoke([
@@ -65,20 +65,24 @@ ${oracleContext!.solidityScaffold}
       { role: "user", content: userMessage },
     ]);
     const solidityCode = extractSolidity(response.content as string);
-    console.log("[generatePoCNode] Solidity extraído, tamanho:", solidityCode.length);
+    console.log("[testerAgent] Solidity extraído, tamanho:", solidityCode.length);
     return { pocCode: solidityCode, iterations: 1 };
   } catch (err) {
-    console.error("[generatePoCNode] falha:", (err as Error).message);
+    console.error("[testerAgent] falha na geração:", (err as Error).message);
     return { iterations: 1, lastError: `Erro na geração/extração: ${(err as Error).message}` };
   }
 }
 
 async function runFoundryNode(state: PoCState): Promise<Partial<PoCState>> {
+  console.log("[testerAgent] Executando runFoundryNode...");
   const result   = await runFoundry(state.pocCode);
   const analysis = analyzeFoundryLog(result);
   const passed   = result.exitCode === 0 && result.stdout.includes("ok");
 
-  console.log(`[runFoundryNode] exitCode=${result.exitCode}, passed=${passed}`);
+  console.log(`[testerAgent] Resultado Foundry: exitCode=${result.exitCode}, passed=${passed}`);
+  if (!passed) {
+    console.log(`[testerAgent] Falha detectada: ${analysis.summary}`);
+  }
 
   return {
     executionLogs: [result.combined],   // reducer append

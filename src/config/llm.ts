@@ -1,5 +1,6 @@
 import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
 import { ChatAnthropic } from "@langchain/anthropic";
+import { ChatOpenRouter } from "@langchain/openrouter";
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 
 export type LLMProvider = "google" | "openrouter" | "anthropic";
@@ -8,17 +9,20 @@ export function createLLM(overrideProvider?: LLMProvider): BaseChatModel {
   const provider = overrideProvider || (process.env.LLM_PROVIDER as LLMProvider) || "google";
 
   switch (provider) {
-    case "openrouter": {
-      const { ChatOpenRouter } = require("@langchain/openrouter");
+    case "openrouter":
       return new ChatOpenRouter({
-        model: process.env.OPENROUTER_MODEL || "google/gemini-2.5-flash",
+        model: process.env.OPENROUTER_MODEL || "openai/gpt-4o-mini",
         temperature: 0.2,
-      }) as BaseChatModel;
-    }
+        apiKey: process.env.OPENROUTER_API_KEY,
+        maxTokens: 4096,
+      });
+
+
     case "anthropic":
       return new ChatAnthropic({
         model: process.env.ANTHROPIC_MODEL || "claude-sonnet-4-6",
         temperature: 0.2,
+        maxTokens: 4096,
       });
     case "google":
     default:
@@ -26,6 +30,7 @@ export function createLLM(overrideProvider?: LLMProvider): BaseChatModel {
         apiKey: process.env.GOOGLE_API_KEY || "",
         model: process.env.MODEL_NAME || "gemini-2.5-flash",
         temperature: 0.2,
+        maxOutputTokens: 4096,
       });
   }
 }
