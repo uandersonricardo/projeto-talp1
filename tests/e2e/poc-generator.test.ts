@@ -1,3 +1,5 @@
+import { describe, expect, it } from "vitest";
+
 import { runPoCGenerator } from "../../src/agents/tester/index.js";
 import { VulnerabilityReport } from "../../src/agents/tester/types.js";
 
@@ -26,31 +28,12 @@ const mockReport: VulnerabilityReport = {
   suggestedCheatcodes: ["vm.deal", "vm.startPrank", "vm.stopPrank"],
 };
 
-async function runE2ETest() {
-  console.log("Iniciando smoke test end-to-end (Reentrancy)...");
-  
-  // Garantir que o sandbox está limpo
-  // No mundo real, scripts/setup-sandbox.sh deve ser rodado uma vez no setup do sistema
-  
-  try {
+describe("PoC generator (e2e)", () => {
+  it("generates a PoC from a vulnerability report", async () => {
     const result = await runPoCGenerator(mockReport);
 
-    console.log("\n======= E2E RESULT =======");
-    console.log(`Status: ${result.status}`);
-    console.log(`Iterações: ${result.iterations}`);
-    console.log(`Logs: ${result.executionLogs.length} entrada(s)`);
-
-    console.assert(result.status === "success", `FALHOU: status esperado 'success', recebido '${result.status}'`);
-    console.assert(result.solidityCode.includes("test_Exploit"), "FALHOU: código não contém test_Exploit");
-
-    if (result.status === "success") {
-        console.log("\nSmoke test PASSOU: Vulnerabilidade confirmada via PoC!");
-    } else {
-        console.error("\nSmoke test FALHOU: Agente não conseguiu gerar PoC válido.");
-    }
-  } catch (error) {
-    console.error("Erro fatal no teste E2E:", error);
-  }
-}
-
-runE2ETest().catch(console.error);
+    expect(result.status).toBe("success");
+    expect(result.solidityCode).toContain("test_Exploit");
+    expect(result.executionLogs.length).toBeGreaterThan(0);
+  }, 120000);
+});
