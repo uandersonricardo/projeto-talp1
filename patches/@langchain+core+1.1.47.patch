@@ -1,0 +1,25 @@
+diff --git a/node_modules/@langchain/core/dist/utils/uuid/index.cjs b/node_modules/@langchain/core/dist/utils/uuid/index.cjs
+index 1151178..c05caf9 100644
+--- a/node_modules/@langchain/core/dist/utils/uuid/index.cjs
++++ b/node_modules/@langchain/core/dist/utils/uuid/index.cjs
+@@ -36,12 +36,12 @@ Object.defineProperty(exports, "uuid_exports", {
+ 		return uuid_exports;
+ 	}
+ });
+-exports.v1 = require_v1;
+-exports.v4 = require_v4;
+-exports.v5 = require_v5;
+-exports.v6 = require_v6;
+-exports.v7 = require_v7;
+-exports.validate = require_validate;
+-exports.version = require_version;
++exports.v1 = require_v1.default;
++exports.v4 = require_v4.default;
++exports.v5 = require_v5.default;
++exports.v6 = require_v6.default;
++exports.v7 = require_v7.default;
++exports.validate = require_validate.default;
++exports.version = require_version.default;
+ 
+ //# sourceMappingURL=index.cjs.map
+\ No newline at end of file

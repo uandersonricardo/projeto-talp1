@@ -1,50 +1,61 @@
 import "dotenv/config";
 
+import { readFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { auditorAgent } from "./agents/auditor/agent.js";
 import { coderAgent } from "./agents/coder/agent.js";
 import { testerAgent } from "./agents/tester/agent.js";
+import { logger } from "./logger.js";
 import type { VulnerabilityReport, Finding } from "./agents/tester/types.js";
 
-const requirements = ["ERC20 token", "pausable", "ownable"];
+const inputPath = process.argv[2];
 
-const coderResult = await coderAgent.invoke({ requirements });
+if (!inputPath) {
+  console.log("Uso: npm start -- <caminho-do-arquivo-de-requisitos>");
+  console.log("Exemplo: npm start -- input/requirements.md");
+  process.exit(1);
+}
+
+const requirementsText = readFileSync(resolve(inputPath), "utf-8");
+console.log("Requisitos carregados de:", inputPath);
+
+const coderResult = await coderAgent.invoke({ requirements: [requirementsText] });
 console.log("======= Coder =======");
-// console.log(coderResult.contract);
 
-const auditorResult = await auditorAgent.invoke({ solidityFile: coderResult.contract });
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const outputDir = resolve(__dirname, "agents/coder/outputs");
+mkdirSync(outputDir, { recursive: true });
+writeFileSync(resolve(outputDir, "Contract.sol"), coderResult.contract, "utf-8");
+writeFileSync(resolve(outputDir, "README.md"), requirementsText, "utf-8");
+console.log("\nContrato e requisitos salvos em:", outputDir);
+
 console.log("\n======= Auditor =======");
-// console.log(auditorResult.vulnerabilities);
+logger.info("Starting auditorAgent");
 
-function mapFindingToReport(finding: Partial<Finding> & { type?: string; severity?: string }, sourceCode: string): VulnerabilityReport {
-  const title = typeof finding.title === "string" && finding.title.trim().length > 0
-    ? finding.title
-    : typeof finding.type === "string" && finding.type.trim().length > 0
-      ? finding.type
-      : "Unknown vulnerability";
+const auditorResult = await auditorAgent.invoke({ repoPath: outputDir });
 
-  const description = typeof finding.description === "string" && finding.description.trim().length > 0
-    ? finding.description
-    : "No description provided by auditor.";
+logger.info("Agent completed");
+logger.info(`Findings: ${auditorResult.findings.length}`);
+for (const f of auditorResult.findings) {
+  logger.info(`  [${f.severity.toUpperCase()}] ${f.title} — ${f.location}`);
+}
 
+function mapFindingToReport(finding: any, sourceCode: string): VulnerabilityReport {
+  const title = finding.title || finding.type || "Unknown vulnerability";
+  const description = finding.description || "No description provided by auditor.";
+  
   const nameMatch = finding.path?.match(/([^\/]+)\.sol$/);
   const contractName = nameMatch ? nameMatch[1] : "TargetContract";
 
-  const exploitablePaths = Array.isArray(finding.judgeReview?.exploitablePaths)
-    ? finding.judgeReview.exploitablePaths
-    : [];
-
-  const severity = finding.severity === "high" || finding.severity === "medium" || finding.severity === "low"
-    ? finding.severity
-    : "low";
-
-  if (!finding.path || !finding.judgeReview) {
-    console.warn("Auditor returned incomplete finding; using fallbacks for PoC generation.");
-  }
+  const exploitablePaths = finding.judgeReview?.exploitablePaths || [];
 
   return {
     id: title.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 50),
-    severity,
-    type: typeof finding.type === "string" && finding.type.trim().length > 0 ? finding.type : "custom",
+    severity: (finding.severity === "high" || finding.severity === "medium" || finding.severity === "low") 
+               ? finding.severity : "low",
+    type: finding.type || "custom",
     title,
     description,
     affectedContract: {
@@ -53,18 +64,18 @@ function mapFindingToReport(finding: Partial<Finding> & { type?: string; severit
     },
     attackVector: exploitablePaths[0] ?? "Unknown vector",
     exploitablePaths,
-    codeSnippet: typeof finding.codeSnippet === "string" ? finding.codeSnippet : undefined,
-    location: typeof finding.location === "string" ? finding.location : undefined,
+    codeSnippet: finding.codeSnippet,
+    location: finding.location
   };
 }
 
-if (auditorResult.vulnerabilities.length > 0) {
-  const finding = auditorResult.vulnerabilities[0] as Finding;
+if (auditorResult.findings.length > 0) {
+  const finding = auditorResult.findings[0];
   const report = mapFindingToReport(finding, coderResult.contract);
 
+  console.log("\n======= Tester =======");
   const testerResult = await testerAgent.invoke({ report });
 
-  console.log("\n======= Tester =======");
   console.log("Status:", testerResult.status);
   console.log("Iterations:", testerResult.iterations);
 } else {
