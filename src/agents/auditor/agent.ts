@@ -6,7 +6,7 @@ import { END, type GraphNode, START, StateGraph } from "@langchain/langgraph";
 import { z } from "zod";
 
 import { logger } from "../../logger.ts";
-import { judgeFindingsModel, findVulnerabilitiesModel, gatherContextModel } from "./model.ts";
+import { createLLM } from "../../config/llm.ts";
 import { JUDGE_FINDINGS_PROMPT, FIND_VULNERABILITIES_PROMPT, GATHER_CONTEXT_PROMPT } from "./prompts.ts";
 import { AuditorState, JudgeReviewSchema, CandidateFindingSchema } from "./state.ts";
 import { analyzeSolidityFile } from "./tools/solidity-analyzer-tool.ts";
@@ -23,6 +23,8 @@ import {
   SOL_TEST_SUFFIXES,
 } from "./config.ts";
 import { matchLines } from "./utils.ts";
+
+const llm = createLLM();
 
 const walkDirectory = (dir: string, depth: number, solFiles: string[], docFiles: string[]) => {
   if (depth > MAX_DEPTH) return;
@@ -119,7 +121,7 @@ const gatherContext: GraphNode<typeof AuditorState> = async (state) => {
     parts.push(`### ${filePath}\n\`\`\`solidity\n${source}\n\`\`\``);
   }
 
-  const model = gatherContextModel.withStructuredOutput(z.object({ context: z.string() }));
+  const model = llm.withStructuredOutput(z.object({ context: z.string() }));
   const result = await model.invoke([new SystemMessage(GATHER_CONTEXT_PROMPT), new HumanMessage(parts.join("\n\n"))]);
 
   logger.info(`gatherContext: context built (${parts.join("\n\n").length} chars)`);
@@ -129,7 +131,7 @@ const gatherContext: GraphNode<typeof AuditorState> = async (state) => {
 };
 
 const findVulnerabilities: GraphNode<typeof AuditorState> = async (state) => {
-  const model = findVulnerabilitiesModel.withStructuredOutput(z.object({ findings: z.array(CandidateFindingSchema) }));
+  const model = llm.withStructuredOutput(z.object({ findings: z.array(CandidateFindingSchema) }));
 
   const previousFeedback =
     state.judgeReviews.length > 0
@@ -192,7 +194,7 @@ const judgeFindings: GraphNode<typeof AuditorState> = async (state) => {
     };
   }
 
-  const model = judgeFindingsModel.withStructuredOutput(JudgeReviewSchema);
+  const model = llm.withStructuredOutput(JudgeReviewSchema);
 
   logger.info(`judgeFindings: reviewing ${state.candidateFindings.length} candidate finding(s) in parallel`);
 

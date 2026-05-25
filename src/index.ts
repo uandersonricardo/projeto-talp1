@@ -27,9 +27,9 @@ console.log(coderResult.contract);
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const outputDir = resolve(__dirname, "agents/coder/outputs");
 mkdirSync(outputDir, { recursive: true });
-const outputPath = resolve(outputDir, "Contract.sol");
-writeFileSync(outputPath, coderResult.contract, "utf-8");
-console.log("\nContrato salvo em:", outputPath);
+writeFileSync(resolve(outputDir, "Contract.sol"), coderResult.contract, "utf-8");
+writeFileSync(resolve(outputDir, "README.md"), requirementsText, "utf-8");
+console.log("\nContrato e requisitos salvos em:", outputDir);
 
 console.log("\n======= Auditor =======");
 logger.info("Starting auditorAgent");
@@ -37,7 +37,10 @@ logger.info("Starting auditorAgent");
 const auditorResult = await auditorAgent.invoke({ repoPath: outputDir });
 
 logger.info("Agent completed");
-logger.debug(`Agent result:\n${JSON.stringify(auditorResult, null, 2)}`);
+logger.info(`Findings: ${auditorResult.findings.length}`);
+for (const f of auditorResult.findings) {
+  logger.info(`  [${f.severity.toUpperCase()}] ${f.title} — ${f.location}`);
+}
 
 const testerResult = await testerAgent.invoke({
   solidityFiles: [coderResult.contract],

@@ -1,4 +1,8 @@
 import "dotenv/config";
+
+import { mkdirSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { tmpdir } from "node:os";
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
@@ -42,32 +46,49 @@ app.post("/api/run", (c) => {
         await send("log", "[Coder] Contrato compilado sem erros.");
       }
 
-      await send("coder", JSON.stringify({
-        contract: coderResult.contract,
-        compilationErrors: coderResult.compilationErrors,
-        reviewSummary: coderResult.reviewSummary,
-      }));
+      await send(
+        "coder",
+        JSON.stringify({
+          contract: coderResult.contract,
+          compilationErrors: coderResult.compilationErrors,
+          reviewSummary: coderResult.reviewSummary,
+        }),
+      );
 
       // === AUDITOR ===
-      await send("log", "[Auditor] Iniciando auditoria de segurança...");
-      const auditorResult = await auditorAgent.invoke({ solidityFile: coderResult.contract });
-      await send("log", `[Auditor] ${auditorResult.vulnerabilities.length} vulnerabilidade(s) encontrada(s).`);
+      const outputDir = resolve(tmpdir(), `talp1-${Date.now()}`);
+      mkdirSync(outputDir, { recursive: true });
+      writeFileSync(resolve(outputDir, "Contract.sol"), coderResult.contract, "utf-8");
+      writeFileSync(resolve(outputDir, "README.md"), requirements, "utf-8");
 
-      await send("auditor", JSON.stringify({
-        vulnerabilities: auditorResult.vulnerabilities,
-      }));
+      await send("log", "[Auditor] Iniciando auditoria de segurança...");
+      const auditorResult = await auditorAgent.invoke({ repoPath: outputDir });
+      await send("log", `[Auditor] ${auditorResult.findings.length} vulnerabilidade(s) encontrada(s).`);
+      for (const f of auditorResult.findings) {
+        await send("log", `[Auditor] [${f.severity.toUpperCase()}] ${f.title} — ${f.location}`);
+      }
+
+      await send(
+        "auditor",
+        JSON.stringify({
+          findings: auditorResult.findings,
+        }),
+      );
 
       // === TESTER ===
       await send("log", "[Tester] Gerando testes de prova de conceito...");
       const testerResult = await testerAgent.invoke({
         solidityFiles: [coderResult.contract],
-        vulnerability: auditorResult.vulnerabilities[0] ?? {},
+        vulnerability: auditorResult.findings[0] ?? {},
       });
       await send("log", `[Tester] ${testerResult.results.length} resultado(s) de teste.`);
 
-      await send("tester", JSON.stringify({
-        results: testerResult.results,
-      }));
+      await send(
+        "tester",
+        JSON.stringify({
+          results: testerResult.results,
+        }),
+      );
 
       await send("log", "Pipeline concluído.");
       await send("done", "ok");
