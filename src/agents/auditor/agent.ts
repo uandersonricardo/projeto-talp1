@@ -22,6 +22,7 @@ import {
   SOL_EXT,
   SOL_TEST_SUFFIXES,
 } from "./config.ts";
+import { matchLines } from "./utils.ts";
 
 const walkDirectory = (dir: string, depth: number, solFiles: string[], docFiles: string[]) => {
   if (depth > MAX_DEPTH) return;
@@ -160,11 +161,17 @@ const findVulnerabilities: GraphNode<typeof AuditorState> = async (state) => {
       }
 
       logger.debug(`findVulnerabilities: processing ${filePath}`);
+
       const result = await model.invoke([
         new SystemMessage(FIND_VULNERABILITIES_PROMPT),
         new HumanMessage(userMessage),
       ]);
-      return result.findings.map((finding: any) => ({ ...finding, path: filePath, location: "1-14" }));
+
+      return result.findings.map((finding: any) => ({
+        ...finding,
+        path: filePath,
+        location: matchLines(source, finding.codeSnippet) ?? "",
+      }));
     }),
   );
 

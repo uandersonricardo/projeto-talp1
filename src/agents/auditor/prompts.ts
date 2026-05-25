@@ -44,7 +44,7 @@ For each finding provide ALL of the following fields:
 - **review**: Detailed analysis (3–6 sentences) explaining why the vulnerability is or isn't real. Reference specific code, protocol invariants, preconditions, and mitigating controls.
 - **isFalsePositive**: true if the finding is NOT exploitable in practice; false if it IS a real vulnerability.
 - **confidence**: Integer 0–100 reflecting your confidence in this verdict.
-- **exploitablePaths**: If a true positive, provide concrete paths confirming exploitability with real values. Each trace must describe the attacker steps with realistic inputs/values (e.g., "1. Attacker calls deposit(100 ETH) 2. Attacker contract fallback re-enters withdraw() before balance update 3. Attacker drains 100 ETH twice"). If a false positive, provide the reasoning that blocks the exploit.
+- **exploitablePaths**: Array of strings. If a true positive, provide concrete paths confirming exploitability with real values. Each trace must describe the attacker steps with realistic inputs/values (e.g., "1. Attacker calls deposit(100 ETH) 2. Attacker contract fallback re-enters withdraw() before balance update 3. Attacker drains 100 ETH twice"). If a false positive, provide the reasoning that blocks the exploit.
 
 A finding is a false positive if and only if: the exploit path is unreachable given access controls or preconditions, it is already fully mitigated by the code, it requires impossible or economically infeasible conditions, or it is explicitly documented as by-design behavior in the protocol assumptions.
 
