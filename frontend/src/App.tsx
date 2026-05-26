@@ -20,7 +20,11 @@ interface AgentResult {
   compilationErrors?: string[];
   reviewSummary?: string;
   findings?: Finding[];
-  results?: unknown[];
+  // Tester fields
+  status?: string;
+  pocCode?: string;
+  executionLogs?: string[];
+  iterations?: number;
 }
 
 export function App() {
@@ -60,6 +64,7 @@ export function App() {
 
       const decoder = new TextDecoder();
       let buffer = "";
+      let currentEvent = "";
 
       while (true) {
         const { done, value } = await reader.read();
@@ -69,7 +74,6 @@ export function App() {
         const lines = buffer.split("\n");
         buffer = lines.pop() || "";
 
-        let currentEvent = "";
         for (const line of lines) {
           if (line.startsWith("event:")) {
             currentEvent = line.slice(6).trim();
@@ -94,6 +98,7 @@ export function App() {
                 appendLog(`❌ ERRO: ${data}`);
                 break;
             }
+            currentEvent = "";
           }
         }
       }
@@ -220,13 +225,38 @@ export function App() {
       {testerResult && (
         <section style={styles.section}>
           <h2 style={styles.sectionTitle}>🧪 Agente Tester</h2>
-          <div style={styles.codeBox}>
-            <pre style={styles.code}>
-              {testerResult.results && testerResult.results.length > 0
-                ? JSON.stringify(testerResult.results, null, 2)
-                : "Nenhum resultado de teste gerado."}
-            </pre>
+          <div style={styles.resultBox}>
+            <p style={styles.resultText}>
+              <strong>Status:</strong>{" "}
+              <span style={{ color: testerResult.status === "success" ? "#22c55e" : "#ef4444" }}>
+                {testerResult.status?.toUpperCase()}
+              </span>
+              <br />
+              <strong>Iterações:</strong> {testerResult.iterations}
+            </p>
           </div>
+
+          {testerResult.pocCode && (
+            <>
+              <h3 style={styles.subTitle}>Proof of Concept (Exploit)</h3>
+              <div style={styles.codeBox}>
+                <pre style={styles.code}>{testerResult.pocCode}</pre>
+              </div>
+            </>
+          )}
+
+          {testerResult.executionLogs && testerResult.executionLogs.length > 0 && (
+            <>
+              <h3 style={styles.subTitle}>Logs de Execução (Foundry)</h3>
+              <div style={styles.logBox}>
+                {testerResult.executionLogs.map((log, i) => (
+                  <div key={i} style={styles.logLine}>
+                    {log}
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
         </section>
       )}
     </div>

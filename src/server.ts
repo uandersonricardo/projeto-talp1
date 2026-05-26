@@ -12,6 +12,7 @@ import { serveStatic } from "@hono/node-server/serve-static";
 import { coderAgent } from "./agents/coder/agent.ts";
 import { auditorAgent } from "./agents/auditor/agent.ts";
 import { testerAgent } from "./agents/tester/agent.ts";
+import { mapFindingToReport } from "./utils/mapFinding.js";
 
 const app = new Hono();
 
@@ -77,18 +78,27 @@ app.post("/api/run", (c) => {
 
       // === TESTER ===
       await send("log", "[Tester] Gerando testes de prova de conceito...");
-      const testerResult = await testerAgent.invoke({
-        solidityFiles: [coderResult.contract],
-        vulnerability: auditorResult.findings[0] ?? {},
-      });
-      await send("log", `[Tester] ${testerResult.results.length} resultado(s) de teste.`);
 
-      await send(
-        "tester",
-        JSON.stringify({
-          results: testerResult.results,
-        }),
-      );
+      if (auditorResult.findings.length > 0) {
+        const report = mapFindingToReport(auditorResult.findings[0], coderResult.contract);
+        const testerResult = await testerAgent.invoke({ report });
+
+        await send("log", `[Tester] Execução concluída com status: ${testerResult.status}`);
+        
+        // Garante que o objeto enviado tem exatamente o que o front espera
+        await send(
+          "tester",
+          JSON.stringify({
+            status: testerResult.status,
+            pocCode: testerResult.pocCode,
+            executionLogs: testerResult.executionLogs,
+            iterations: testerResult.iterations,
+          }),
+        );
+      } else {
+        await send("log", "[Tester] Nenhuma vulnerabilidade para testar.");
+        await send("tester", JSON.stringify({ status: "skipped", iterations: 0 }));
+      }
 
       await send("log", "Pipeline concluído.");
       await send("done", "ok");
