@@ -29,7 +29,7 @@ test = "test"
 script = "script"
 out = "out"
 libs = ["lib"]
-solc-version = "0.8.20"
+solc_version = "0.8.20"
 optimizer = true
 optimizer_runs = 200
 EOF

@@ -42,4 +42,7 @@ EXPOSE 7860
 COPY scripts/ ./scripts/
 RUN chmod +x scripts/*.sh
 
+# Run sandbox setup once during image build to cache it
+RUN ./scripts/setup-sandbox.sh
+
 CMD ["node", "dist/server.js"]

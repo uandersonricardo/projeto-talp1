@@ -71,9 +71,36 @@ ${oracleContext!.solidityScaffold}
 
 async function runFoundryNode(state: PoCState): Promise<Partial<PoCState>> {
   console.log("[testerAgent] Executando runFoundryNode...");
+
+  const trimmedCode = state.pocCode.trim();
+  const isMissingCode = trimmedCode.length === 0;
+  const isMissingContract = !trimmedCode.includes("contract ExploitTest");
+  const isMissingTest = !trimmedCode.includes("function test_Exploit()");
+  const isPlaceholder = trimmedCode.includes("TODO: implementar exploit");
+  if (isMissingCode || isMissingContract || isMissingTest || isPlaceholder) {
+    const summary = state.lastError ?? (isMissingCode
+      ? "Código Solidity ausente. O LLM não retornou o arquivo do exploit."
+      : isMissingContract
+        ? "Contrato ExploitTest não encontrado no arquivo."
+        : isMissingTest
+          ? "Função test_Exploit() não encontrada no arquivo."
+          : "Exploit não implementado (placeholder TODO ainda presente)."
+    );
+    const status = state.iterations >= MAX_ITERATIONS ? "failed" : "running";
+    return {
+      executionLogs: [summary],
+      lastError: summary,
+      status,
+    };
+  }
+
   const result   = await runFoundry(state.pocCode);
   const analysis = analyzeFoundryLog(result);
-  const passed   = result.exitCode === 0 && result.stdout.includes("ok");
+  const noTestsFound = result.combined.includes("No tests found");
+  const summary = noTestsFound
+    ? "Forge não encontrou nenhum teste. Verifique se o contrato se chama ExploitTest e se existe test_Exploit()."
+    : analysis.summary;
+  const passed   = result.exitCode === 0 && result.stdout.includes("ok") && !noTestsFound;
   const isLastAttempt = state.iterations >= MAX_ITERATIONS;
 
   const status = passed
@@ -91,7 +118,7 @@ async function runFoundryNode(state: PoCState): Promise<Partial<PoCState>> {
 
   return {
     executionLogs: [result.combined],   // reducer append
-    lastError: analysis.summary,
+    lastError: summary,
     status,
   };
 }

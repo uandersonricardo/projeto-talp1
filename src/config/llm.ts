@@ -6,7 +6,7 @@ import type { BaseChatModel } from "@langchain/core/language_models/chat_models"
 export type LLMProvider = "google" | "openrouter" | "anthropic";
 
 export function createLLM(overrideProvider?: LLMProvider): BaseChatModel {
-  const provider = overrideProvider || (process.env.LLM_PROVIDER as LLMProvider) || "google";
+  const provider = overrideProvider || (process.env.LLM_PROVIDER as LLMProvider) || "openrouter";
 
   switch (provider) {
     case "openrouter":

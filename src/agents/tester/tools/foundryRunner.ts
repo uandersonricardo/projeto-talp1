@@ -4,7 +4,7 @@ import { writeFile, access } from "fs/promises";
 import { join } from "path";
 
 const execAsync  = promisify(exec);
-const SANDBOX    = "/tmp/poc-sandbox";
+const SANDBOX = process.env.SANDBOX_DIR || "/tmp/poc-sandbox";
 const TIMEOUT_MS = 60_000;
 
 export interface FoundryResult {
