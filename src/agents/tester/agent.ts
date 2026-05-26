@@ -3,7 +3,7 @@ import { StateGraph, END, START } from "@langchain/langgraph";
 import { PoCStateAnnotation, PoCState } from "./state.js";
 import { generateLocalScaffold } from "./tools/scaffoldGenerator.js";
 import { OracleContext } from "./types.js";
-import { ChatOpenRouter } from "@langchain/openrouter";
+import { createLLM } from "../../config/llm.ts";
 import { SYSTEM_PROMPT } from "./prompts/system.js";
 import { extractSolidity } from "./utils/extractSolidity.js";
 import { runFoundry } from "./tools/foundryRunner.js";
@@ -11,11 +11,7 @@ import { analyzeFoundryLog } from "./utils/logAnalyzer.js";
 
 const MAX_ITERATIONS = 5;
 
-const llm = new ChatOpenRouter({
-  model: process.env.OPENROUTER_MODEL || "deepseek/deepseek-v4-flash",
-  temperature: 0.2,
-  apiKey: process.env.OPENROUTER_API_KEY,
-});
+const llm = createLLM();
 
 async function oracleNode(state: PoCState): Promise<Partial<PoCState>> {
   console.log("[oracleNode] gerando scaffold para:", state.report.title);
