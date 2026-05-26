@@ -24,6 +24,8 @@ import {
 } from "./config.ts";
 import { matchLines } from "./utils.ts";
 
+const llm = createLLM();
+
 const walkDirectory = (dir: string, depth: number, solFiles: string[], docFiles: string[]) => {
   if (depth > MAX_DEPTH) return;
 
@@ -119,29 +121,17 @@ const gatherContext: GraphNode<typeof AuditorState> = async (state) => {
     parts.push(`### ${filePath}\n\`\`\`solidity\n${source}\n\`\`\``);
   }
 
-  const llm = createLLM();
-  const result = await llm.invoke([new SystemMessage(GATHER_CONTEXT_PROMPT), new HumanMessage(parts.join("\n\n"))]);
+  const model = llm.withStructuredOutput(z.object({ context: z.string() }));
+  const result = await model.invoke([new SystemMessage(GATHER_CONTEXT_PROMPT), new HumanMessage(parts.join("\n\n"))]);
 
-  const repoContext = typeof result.content === "string" ? result.content : JSON.stringify(result.content);
+  logger.info(`gatherContext: context built (${parts.join("\n\n").length} chars)`);
+  logger.debug(`gatherContext: full context:\n${parts.join("\n\n")}`);
 
-  logger.info(`gatherContext: context built (${repoContext.length} chars)`);
-  logger.debug(`gatherContext: full context:\n${repoContext}`);
-
-  return { repoContext };
+  return { repoContext: result.context };
 };
 
 const findVulnerabilities: GraphNode<typeof AuditorState> = async (state) => {
-  console.log("[auditorAgent] Iniciando findVulnerabilities...");
-  const llm = createLLM();
-  const model = llm.withStructuredOutput(
-    z.object({
-      findings: z.array(CandidateFindingSchema),
-    }),
-    {
-      name: "vulnerability_report",
-      method: "jsonSchema",
-    },
-  );
+  const model = llm.withStructuredOutput(z.object({ findings: z.array(CandidateFindingSchema) }));
 
   const previousFeedback =
     state.judgeReviews.length > 0
@@ -195,7 +185,6 @@ const findVulnerabilities: GraphNode<typeof AuditorState> = async (state) => {
 };
 
 const judgeFindings: GraphNode<typeof AuditorState> = async (state) => {
-  console.log(`[auditorAgent] Iniciando judgeFindings para ${state.candidateFindings.length} candidatos...`);
   if (state.candidateFindings.length === 0) {
     logger.info("judgeFindings: no candidate findings to review, skipping LLM call");
     return {
@@ -205,16 +194,7 @@ const judgeFindings: GraphNode<typeof AuditorState> = async (state) => {
     };
   }
 
-  const llm = createLLM();
-  const model = llm.withStructuredOutput(
-    z.object({
-      review_result: JudgeReviewSchema,
-    }),
-    {
-      name: "judge_review",
-      method: "jsonSchema",
-    },
-  );
+  const model = llm.withStructuredOutput(JudgeReviewSchema);
 
   logger.info(`judgeFindings: reviewing ${state.candidateFindings.length} candidate finding(s) in parallel`);
 
@@ -230,13 +210,12 @@ const judgeFindings: GraphNode<typeof AuditorState> = async (state) => {
       const findingText = `[Finding ${i + 1}] ${finding.title}\nSeverity: ${finding.severity}\nDescription: ${finding.description}\nLocation: ${finding.path} lines ${finding.location}\nCode:\n\`\`\`solidity\n${finding.codeSnippet}\n\`\`\``;
 
       logger.debug(`judgeFindings: reviewing finding ${i + 1}: ${finding.title}`);
-      const result = await model.invoke([
+      return model.invoke([
         new SystemMessage(JUDGE_FINDINGS_PROMPT),
         new HumanMessage(
           `Contract (${finding.path}):\n\n${source}\n\nProtocol Context:\n${state.repoContext}\n\nFinding to Review:\n\n${findingText}`,
         ),
       ]);
-      return result.review_result;
     }),
   );
 
@@ -255,7 +234,6 @@ const judgeFindings: GraphNode<typeof AuditorState> = async (state) => {
 
   const falsePositiveCount = state.candidateFindings.length - findings.length;
 
-  console.log(`[auditorAgent] Concluído: ${findings.length} confirmados, ${falsePositiveCount} falsos positivos.`);
   logger.info(`judgeFindings: ${findings.length} confirmed, ${falsePositiveCount} false positive(s)`);
   logger.debug(`judgeFindings: reviews:\n${JSON.stringify(reviews, null, 2)}`);
 

@@ -11,7 +11,7 @@ export function createLLM(overrideProvider?: LLMProvider): BaseChatModel {
   switch (provider) {
     case "openrouter":
       return new ChatOpenRouter({
-        model: process.env.OPENROUTER_MODEL || "openai/gpt-4o-mini",
+        model: process.env.OPENROUTER_MODEL || "google/gemini-3.1-flash-lite",
         temperature: 0.2,
         apiKey: process.env.OPENROUTER_API_KEY,
         maxTokens: 4096,

@@ -84,6 +84,8 @@ app.post("/api/run", (c) => {
         const testerResult = await testerAgent.invoke({ report });
 
         await send("log", `[Tester] Execução concluída com status: ${testerResult.status}`);
+        
+        // Garante que o objeto enviado tem exatamente o que o front espera
         await send(
           "tester",
           JSON.stringify({
@@ -95,7 +97,7 @@ app.post("/api/run", (c) => {
         );
       } else {
         await send("log", "[Tester] Nenhuma vulnerabilidade para testar.");
-        await send("tester", JSON.stringify({ results: [] }));
+        await send("tester", JSON.stringify({ status: "skipped", iterations: 0 }));
       }
 
       await send("log", "Pipeline concluído.");

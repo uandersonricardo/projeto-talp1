@@ -78,6 +78,15 @@ async function runFoundryNode(state: PoCState): Promise<Partial<PoCState>> {
   const result   = await runFoundry(state.pocCode);
   const analysis = analyzeFoundryLog(result);
   const passed   = result.exitCode === 0 && result.stdout.includes("ok");
+  const isLastAttempt = state.iterations >= MAX_ITERATIONS;
+
+  const status = passed
+    ? "success"
+    : result.timedOut
+      ? "timeout"
+      : isLastAttempt
+        ? "failed"
+        : "running";
 
   console.log(`[testerAgent] Resultado Foundry: exitCode=${result.exitCode}, passed=${passed}`);
   if (!passed) {
@@ -87,9 +96,7 @@ async function runFoundryNode(state: PoCState): Promise<Partial<PoCState>> {
   return {
     executionLogs: [result.combined],   // reducer append
     lastError: analysis.summary,
-    status: passed          ? "success"
-          : result.timedOut ? "timeout"
-          : "running",
+    status,
   };
 }
 
