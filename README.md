@@ -2,6 +2,15 @@
 
 Projeto desenvolvido para a disciplina **IN1045 — Tópicos Avançados em Linguagens de Programação 1 (TALP1)**, do curso de Mestrado em Ciência da Computação do **Centro de Informática da Universidade Federal de Pernambuco (CIn-UFPE)**.
 
+## Live Version - Hugging Faces
+
+O projeto está disponível para ser testado em: 
+
+[Multi Agent Smart Contracts](https://huggingface.co/spaces/TALP-Project/multi-agent-smart-contracts)
+
+A entrada esperada deve ser um requisito onde a solução é um smart contract, o sistema multi agente irá ter como resultado final o código solidity com a solução proposta após passar pelos 3 agentes
+
+
 ## Visão Geral
 
 Este projeto tem como objetivo desenvolver um sistema multiagente inteligente para **geração**, **auditoria** e **validação de vulnerabilidades** em *smart contracts*.
@@ -18,6 +27,8 @@ O sistema é implementado em **TypeScript** e **Node.js**, utilizando a bibliote
 ## Arquitetura Geral
 
 O sistema é composto por agentes especializados que colaboram entre si em diferentes etapas do processo:
+
+![Arquitetura Geral](./assets/architecture.png)
 
 1. **Exploração e análise dos requisitos**
 
