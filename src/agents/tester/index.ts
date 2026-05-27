@@ -1,5 +1,6 @@
 import { testerAgent } from "./agent.js";
 import { VulnerabilityReport, PoCResult } from "./types.js";
+import { logger } from "../../logger.js";
 
 /**
  * Entry point para o Agente Gerador de PoCs.
@@ -7,19 +8,19 @@ import { VulnerabilityReport, PoCResult } from "./types.js";
  * @returns PoCResult contendo o código do exploit e o status da execução.
  */
 export async function runPoCGenerator(report: VulnerabilityReport): Promise<PoCResult> {
-  console.log(`[runPoCGenerator] Iniciando para: ${report.id} — ${report.title}`);
+  logger.info(`[Tester] runPoCGenerator: iniciando para: ${report.id} — ${report.title}`);
 
   const finalState = await testerAgent.invoke({ report });
 
   const result: PoCResult = {
-    reportId:      report.id,
-    status:        finalState.status === "running" ? "failed" : finalState.status,
-    solidityCode:  finalState.pocCode,
+    reportId: report.id,
+    status: finalState.status === "running" ? "failed" : finalState.status,
+    solidityCode: finalState.pocCode,
     executionLogs: finalState.executionLogs,
-    iterations:    finalState.iterations,
+    iterations: finalState.iterations,
   };
 
-  console.log(`[runPoCGenerator] Concluído — status=${result.status}, iterações=${result.iterations}`);
+  logger.info(`[Tester] runPoCGenerator: concluído — status=${result.status}, iterações=${result.iterations}`);
   return result;
 }
 

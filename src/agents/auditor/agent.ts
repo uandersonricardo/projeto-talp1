@@ -57,7 +57,7 @@ const walkDirectory = (dir: string, depth: number, solFiles: string[], docFiles:
 };
 
 const defineScope: GraphNode<typeof AuditorState> = async (state) => {
-  logger.info(`defineScope: walking repo at ${state.repoPath}`);
+  logger.info(`[Auditor] defineScope: percorrendo repositório em ${state.repoPath}`);
 
   const solFiles: string[] = [];
   const docFiles: string[] = [];
@@ -66,16 +66,16 @@ const defineScope: GraphNode<typeof AuditorState> = async (state) => {
 
   const fileTree = buildRepoTree(state.repoPath);
 
-  logger.info(`defineScope: found ${solFiles.length} Solidity file(s), ${docFiles.length} doc file(s)`);
-  logger.debug(`defineScope: Solidity files: ${JSON.stringify(solFiles)}`);
-  logger.debug(`defineScope: doc files: ${JSON.stringify(docFiles)}`);
-  logger.debug(`defineScope: file tree:\n${fileTree}`);
+  logger.info(`[Auditor] defineScope: encontrado(s) ${solFiles.length} arquivo(s) Solidity e ${docFiles.length} arquivo(s) de documentação`);
+  logger.debug(`[Auditor] defineScope: arquivos Solidity: ${JSON.stringify(solFiles)}`);
+  logger.debug(`[Auditor] defineScope: arquivos de documentação: ${JSON.stringify(docFiles)}`);
+  logger.debug(`[Auditor] defineScope: árvore de arquivos:\n${fileTree}`);
 
   return { scope: solFiles, docs: docFiles, fileTree };
 };
 
 const gatherContext: GraphNode<typeof AuditorState> = async (state) => {
-  logger.info(`gatherContext: processing ${state.scope.length} Solidity file(s) and ${state.docs.length} doc file(s)`);
+  logger.info(`[Auditor] gatherContext: processando ${state.scope.length} arquivo(s) Solidity e ${state.docs.length} arquivo(s) de documentação`);
 
   const readFile = (filePath: string): string => {
     try {
@@ -124,8 +124,8 @@ const gatherContext: GraphNode<typeof AuditorState> = async (state) => {
   const model = llm.withStructuredOutput(z.object({ context: z.string() }));
   const result = await model.invoke([new SystemMessage(GATHER_CONTEXT_PROMPT), new HumanMessage(parts.join("\n\n"))]);
 
-  logger.info(`gatherContext: context built (${parts.join("\n\n").length} chars)`);
-  logger.debug(`gatherContext: full context:\n${parts.join("\n\n")}`);
+  logger.info(`[Auditor] gatherContext: contexto construído (${parts.join("\n\n").length} caracteres)`);
+  logger.debug(`[Auditor] gatherContext: contexto completo:\n${parts.join("\n\n")}`);
 
   return { repoContext: result.context };
 };
@@ -144,7 +144,7 @@ const findVulnerabilities: GraphNode<typeof AuditorState> = async (state) => {
       : null;
 
   logger.info(
-    `findVulnerabilities: invoking LLM for ${state.scope.length} file(s) in parallel (iteration ${state.reflectionCount + 1})`,
+    `[Auditor] findVulnerabilities: invocando LLM para ${state.scope.length} arquivo(s) em paralelo (iteração ${state.reflectionCount + 1})`,
   );
 
   const allFindings = await Promise.all(
@@ -162,7 +162,7 @@ const findVulnerabilities: GraphNode<typeof AuditorState> = async (state) => {
         userMessage += `\n\nJudge feedback from previous iteration (iteration ${state.reflectionCount}):\n${previousFeedback}\n\nRevise your findings accordingly.`;
       }
 
-      logger.debug(`findVulnerabilities: processing ${filePath}`);
+      logger.debug(`[Auditor] findVulnerabilities: processando ${filePath}`);
 
       const result = await model.invoke([
         new SystemMessage(FIND_VULNERABILITIES_PROMPT),
@@ -178,15 +178,15 @@ const findVulnerabilities: GraphNode<typeof AuditorState> = async (state) => {
   );
 
   const candidateFindings = allFindings.flat();
-  logger.info(`findVulnerabilities: LLM returned ${candidateFindings.length} total candidate finding(s)`);
-  logger.debug(`findVulnerabilities: findings:\n${JSON.stringify(candidateFindings, null, 2)}`);
+  logger.info(`[Auditor] findVulnerabilities: LLM retornou ${candidateFindings.length} finding(s) candidato(s) no total`);
+  logger.debug(`[Auditor] findVulnerabilities: findings:\n${JSON.stringify(candidateFindings, null, 2)}`);
 
   return { candidateFindings };
 };
 
 const judgeFindings: GraphNode<typeof AuditorState> = async (state) => {
   if (state.candidateFindings.length === 0) {
-    logger.info("judgeFindings: no candidate findings to review, skipping LLM call");
+    logger.info("[Auditor] judgeFindings: sem findings candidatos para revisar, pulando chamada ao LLM");
     return {
       judgeReviews: [],
       findings: [],
@@ -196,7 +196,7 @@ const judgeFindings: GraphNode<typeof AuditorState> = async (state) => {
 
   const model = llm.withStructuredOutput(JudgeReviewSchema);
 
-  logger.info(`judgeFindings: reviewing ${state.candidateFindings.length} candidate finding(s) in parallel`);
+  logger.info(`[Auditor] judgeFindings: revisando ${state.candidateFindings.length} finding(s) candidato(s) em paralelo`);
 
   const reviews = await Promise.all(
     state.candidateFindings.map(async (finding, i) => {
@@ -209,7 +209,7 @@ const judgeFindings: GraphNode<typeof AuditorState> = async (state) => {
 
       const findingText = `[Finding ${i + 1}] ${finding.title}\nSeverity: ${finding.severity}\nDescription: ${finding.description}\nLocation: ${finding.path} lines ${finding.location}\nCode:\n\`\`\`solidity\n${finding.codeSnippet}\n\`\`\``;
 
-      logger.debug(`judgeFindings: reviewing finding ${i + 1}: ${finding.title}`);
+      logger.debug(`[Auditor] judgeFindings: revisando finding ${i + 1}: ${finding.title}`);
       return model.invoke([
         new SystemMessage(JUDGE_FINDINGS_PROMPT),
         new HumanMessage(
@@ -234,8 +234,8 @@ const judgeFindings: GraphNode<typeof AuditorState> = async (state) => {
 
   const falsePositiveCount = state.candidateFindings.length - findings.length;
 
-  logger.info(`judgeFindings: ${findings.length} confirmed, ${falsePositiveCount} false positive(s)`);
-  logger.debug(`judgeFindings: reviews:\n${JSON.stringify(reviews, null, 2)}`);
+  logger.info(`[Auditor] judgeFindings: ${findings.length} confirmado(s), ${falsePositiveCount} falso(s) positivo(s)`);
+  logger.debug(`[Auditor] judgeFindings: revisões:\n${JSON.stringify(reviews, null, 2)}`);
 
   return {
     judgeReviews: reviews,

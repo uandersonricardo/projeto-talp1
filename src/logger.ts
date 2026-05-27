@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { Writable } from "node:stream";
 
 import winston from "winston";
 
@@ -15,6 +16,27 @@ const lineFormat = printf(({ level, message, timestamp: ts, stack }) => {
   return stack ? `${base}\n${stack}` : base;
 });
 
+type LogSink = (message: string) => void | Promise<void>;
+
+let activeSink: LogSink | null = null;
+
+export function setLogSink(sink: LogSink): void {
+  activeSink = sink;
+}
+
+export function clearLogSink(): void {
+  activeSink = null;
+}
+
+const sinkStream = new Writable({
+  write(chunk: Buffer, _encoding: string, callback: () => void) {
+    if (activeSink) {
+      void activeSink(chunk.toString().trim());
+    }
+    callback();
+  },
+});
+
 export const logger = winston.createLogger({
   level: "debug",
   transports: [
@@ -24,6 +46,11 @@ export const logger = winston.createLogger({
     new winston.transports.File({
       filename: path.join(logsDir, `app-${runTimestamp}.log`),
       format: combine(timestamp(), errors({ stack: true }), lineFormat),
+    }),
+    new winston.transports.Stream({
+      stream: sinkStream,
+      level: "info",
+      format: winston.format.printf(({ message }) => String(message)),
     }),
   ],
 });
