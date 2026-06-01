@@ -8,19 +8,21 @@ import { SYSTEM_PROMPT } from "./prompts/system.js";
 import { extractSolidity } from "./utils/extractSolidity.js";
 import { runFoundry } from "./tools/foundryRunner.js";
 import { analyzeFoundryLog } from "./utils/logAnalyzer.js";
-import { logger } from "../../logger.ts";
+import { logger, emitStep } from "../../logger.ts";
 
 const MAX_ITERATIONS = 5;
 
 const llm = createLLM();
 
 async function oracleNode(state: PoCState): Promise<Partial<PoCState>> {
+  emitStep({ agent: "tester", step: "oracle", status: "running" });
   logger.info(`[Tester] oracleNode: gerando scaffold para: ${state.report.title}`);
 
   const solidityScaffold = generateLocalScaffold(state.report);
   const oracleContext: OracleContext = { solidityScaffold };
 
   logger.info(`[Tester] oracleNode: scaffold gerado, tamanho: ${solidityScaffold.length} chars`);
+  emitStep({ agent: "tester", step: "oracle", status: "done" });
   return { oracleContext };
 }
 
@@ -55,6 +57,7 @@ ${oracleContext!.solidityScaffold}
 \`\`\``;
 
   logger.info(`[Tester] generatePoCNode: iteração ${iterations + 1}, isRetry=${isRetry}`);
+  emitStep({ agent: "tester", step: "gen", status: "running", detail: `iter ${iterations + 1}` });
 
   try {
     const response = await llm.invoke([
@@ -63,14 +66,17 @@ ${oracleContext!.solidityScaffold}
     ]);
     const solidityCode = extractSolidity(response.content as string);
     logger.info(`[Tester] generatePoCNode: Solidity extraído, tamanho: ${solidityCode.length}`);
+    emitStep({ agent: "tester", step: "gen", status: "done" });
     return { pocCode: solidityCode, iterations: 1 };
   } catch (err) {
     logger.error(`[Tester] generatePoCNode: falha na geração: ${(err as Error).message}`);
+    emitStep({ agent: "tester", step: "gen", status: "error" });
     return { iterations: 1, lastError: `Erro na geração/extração: ${(err as Error).message}` };
   }
 }
 
 async function runFoundryNode(state: PoCState): Promise<Partial<PoCState>> {
+  emitStep({ agent: "tester", step: "run", status: "running" });
   logger.info("[Tester] runFoundryNode: executando...");
 
   const trimmedCode = state.pocCode.trim();
@@ -112,6 +118,8 @@ async function runFoundryNode(state: PoCState): Promise<Partial<PoCState>> {
     logger.info(`[Tester] runFoundryNode: falha detectada: ${analysis.summary}`);
   }
 
+  emitStep({ agent: "tester", step: "run", status: passed ? "done" : result.timedOut ? "error" : "done" });
+
   return {
     executionLogs: [result.combined], // reducer append
     lastError: summary,
@@ -120,6 +128,7 @@ async function runFoundryNode(state: PoCState): Promise<Partial<PoCState>> {
 }
 
 async function reflectNode(state: PoCState): Promise<Partial<PoCState>> {
+  emitStep({ agent: "tester", step: "reflect", status: "running" });
   const lastLog = state.executionLogs[state.executionLogs.length - 1];
   if (!lastLog) {
     return { lastError: "Sem logs disponíveis para análise." };
@@ -138,6 +147,7 @@ async function reflectNode(state: PoCState): Promise<Partial<PoCState>> {
   logger.info(`[Tester] reflectNode: categoria: ${analysis.category}`);
   logger.info(`[Tester] reflectNode: resumo: ${analysis.summary}`);
 
+  emitStep({ agent: "tester", step: "reflect", status: "done" });
   return {
     lastError: `[${analysis.category.toUpperCase()}] ${analysis.summary}\n\nLinhas relevantes:\n${analysis.relevantLines.join("\n")}`,
   };

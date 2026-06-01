@@ -18,7 +18,7 @@ export function createLLM(overrideProvider?: LLMProvider): BaseChatModel {
       });
     case "anthropic":
       return new ChatAnthropic({
-        model: process.env.ANTHROPIC_MODEL || "claude-sonnet-4-6",
+        model: process.env.ANTHROPIC_MODEL || "claude-haiku-4-5",
         temperature: 0.2,
         maxTokens: 4096,
       });

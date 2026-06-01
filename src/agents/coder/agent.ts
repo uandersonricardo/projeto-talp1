@@ -4,6 +4,7 @@ import { CoderState } from "./state.ts";
 import { solidityCoderPrompt, solidityFixPrompt, solidityReviewPrompt } from "./prompts.ts";
 import { compileSolidityTool } from "./tools/compile-solidity.ts";
 import { createLLM } from "../../config/llm.ts";
+import { emitStep } from "../../logger.ts";
 
 const MAX_FIX_ATTEMPTS = 3;
 
@@ -21,6 +22,7 @@ function extractSolidityCode(text: string): string {
  * Nó 1: Gera o smart contract a partir dos requisitos.
  */
 const generateContract: GraphNode<typeof CoderState> = async (state) => {
+  emitStep({ agent: "coder", step: "gen", status: "running" });
   const llm = createLLM();
   const chain = solidityCoderPrompt.pipe(llm);
 
@@ -33,6 +35,7 @@ const generateContract: GraphNode<typeof CoderState> = async (state) => {
     typeof result.content === "string" ? result.content : JSON.stringify(result.content),
   );
 
+  emitStep({ agent: "coder", step: "gen", status: "done" });
   return { contract: code, compilationErrors: [] };
 };
 
@@ -40,11 +43,15 @@ const generateContract: GraphNode<typeof CoderState> = async (state) => {
  * Nó 2: Compila o contrato e armazena erros (se houver).
  */
 const compileContract: GraphNode<typeof CoderState> = async (state) => {
+  emitStep({ agent: "coder", step: "compile", status: "running" });
   const result = await compileSolidityTool.invoke({
     sourceCode: state.contract,
     filename: "Contract.sol",
   });
 
+  if (result.errors.length === 0) {
+    emitStep({ agent: "coder", step: "compile", status: "done" });
+  }
   return { compilationErrors: result.errors };
 };
 
@@ -52,6 +59,7 @@ const compileContract: GraphNode<typeof CoderState> = async (state) => {
  * Nó 3: Corrige o contrato com base nos erros de compilação.
  */
 const fixContract: GraphNode<typeof CoderState> = async (state) => {
+  emitStep({ agent: "coder", step: "compile", status: "running", detail: `fix ${fixAttempts}/${MAX_FIX_ATTEMPTS}` });
   const llm = createLLM();
   const chain = solidityFixPrompt.pipe(llm);
 
@@ -73,6 +81,7 @@ const fixContract: GraphNode<typeof CoderState> = async (state) => {
  * Nó 4: Revisa o contrato compilado quanto a segurança e boas práticas.
  */
 const reviewContract: GraphNode<typeof CoderState> = async (state) => {
+  emitStep({ agent: "coder", step: "review", status: "running" });
   const llm = createLLM();
   const chain = solidityReviewPrompt.pipe(llm);
 
@@ -86,6 +95,7 @@ const reviewContract: GraphNode<typeof CoderState> = async (state) => {
   const summary =
     typeof result.content === "string" ? result.content : JSON.stringify(result.content);
 
+  emitStep({ agent: "coder", step: "review", status: "done" });
   return { reviewSummary: summary };
 };
 
@@ -100,7 +110,10 @@ function shouldFix(state: { compilationErrors: string[] }): "fixContract" | "rev
     fixAttempts++;
     return "fixContract";
   }
-  fixAttempts = 0; // reset para próxima execução
+  if (state.compilationErrors.length > 0) {
+    emitStep({ agent: "coder", step: "compile", status: "error" });
+  }
+  fixAttempts = 0;
   return "reviewContract";
 }
 

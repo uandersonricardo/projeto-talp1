@@ -37,6 +37,29 @@ const sinkStream = new Writable({
   },
 });
 
+export interface StepEvent {
+  agent: "coder" | "auditor" | "tester";
+  step: string;
+  status: "running" | "done" | "error" | "skipped";
+  detail?: string;
+}
+
+type StepSink = (event: StepEvent) => void | Promise<void>;
+
+let activeStepSink: StepSink | null = null;
+
+export function setStepSink(sink: StepSink): void {
+  activeStepSink = sink;
+}
+
+export function clearStepSink(): void {
+  activeStepSink = null;
+}
+
+export function emitStep(event: StepEvent): void {
+  if (activeStepSink) void activeStepSink(event);
+}
+
 export const logger = winston.createLogger({
   level: "debug",
   transports: [

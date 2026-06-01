@@ -13,7 +13,7 @@ import { coderAgent } from "./agents/coder/agent.ts";
 import { auditorAgent } from "./agents/auditor/agent.ts";
 import { testerAgent } from "./agents/tester/agent.ts";
 import { mapFindingToReport } from "./utils/mapFinding.js";
-import { logger, setLogSink, clearLogSink } from "./logger.ts";
+import { logger, setLogSink, clearLogSink, setStepSink, clearStepSink } from "./logger.ts";
 
 const app = new Hono();
 
@@ -37,6 +37,7 @@ app.post("/api/run", (c) => {
 
     try {
       setLogSink((msg) => send("log", msg));
+      setStepSink((event) => send("step", JSON.stringify(event)));
 
       // === CODER ===
       logger.info("[Coder] Gerando smart contract a partir dos requisitos...");
@@ -108,6 +109,7 @@ app.post("/api/run", (c) => {
       await send("error", message);
     } finally {
       clearLogSink();
+      clearStepSink();
     }
   });
 });
