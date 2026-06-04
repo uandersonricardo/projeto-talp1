@@ -5,12 +5,8 @@ import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { END, type GraphNode, START, StateGraph } from "@langchain/langgraph";
 import { z } from "zod";
 
-import { logger } from "../../logger.ts";
 import { createLLM } from "../../config/llm.ts";
-import { JUDGE_FINDINGS_PROMPT, FIND_VULNERABILITIES_PROMPT, GATHER_CONTEXT_PROMPT } from "./prompts.ts";
-import { AuditorState, JudgeReviewSchema, CandidateFindingSchema } from "./state.ts";
-import { analyzeSolidityFile } from "./tools/solidity-analyzer-tool.ts";
-import { buildRepoTree } from "./tools/repo-tree-tool.ts";
+import { logger } from "../../logger.ts";
 import {
   DOC_BASENAMES,
   DOC_EXTS,
@@ -22,6 +18,15 @@ import {
   SOL_EXT,
   SOL_TEST_SUFFIXES,
 } from "./config.ts";
+import {
+  FIND_VULNERABILITIES_PROMPT,
+  GATHER_CONTEXT_PROMPT,
+  JUDGE_FINDINGS_PROMPT,
+  RANK_FILES_PROMPT,
+} from "./prompts.ts";
+import { AuditorState, CandidateFindingSchema, FileRankingSchema, JudgeReviewSchema } from "./state.ts";
+import { buildRepoTree } from "./tools/repo-tree/tool.ts";
+import { analyzeSolidityFile } from "./tools/solidity-analyzer/tool.ts";
 import { matchLines } from "./utils.ts";
 
 const llm = createLLM();
@@ -71,7 +76,24 @@ const defineScope: GraphNode<typeof AuditorState> = async (state) => {
   logger.debug(`defineScope: doc files: ${JSON.stringify(docFiles)}`);
   logger.debug(`defineScope: file tree:\n${fileTree}`);
 
-  return { scope: solFiles, docs: docFiles, fileTree };
+  logger.info("defineScope: ranking files by importance");
+
+  const RankFilesSchema = z.object({ rankings: z.array(FileRankingSchema) });
+  const rankingModel = llm.withStructuredOutput(RankFilesSchema);
+
+  const { rankings } = await rankingModel.invoke([
+    new SystemMessage(RANK_FILES_PROMPT),
+    new HumanMessage(
+      `File tree:\n\`\`\`\n${fileTree}\n\`\`\`\n\nSolidity files to rank:\n${solFiles.map((f) => `- ${f}`).join("\n")}`,
+    ),
+  ]);
+
+  const sorted = [...rankings].sort((a, b) => b.importance - a.importance);
+  logger.info(
+    `defineScope: rankings:\n${sorted.map((r) => `  [${r.importance}/5] ${r.filePath} — ${r.reasoning}`).join("\n")}`,
+  );
+
+  return { scope: solFiles, docs: docFiles, fileTree, fileRankings: sorted };
 };
 
 const gatherContext: GraphNode<typeof AuditorState> = async (state) => {
@@ -85,23 +107,23 @@ const gatherContext: GraphNode<typeof AuditorState> = async (state) => {
     }
   };
 
-  // Read and analyze each Solidity file
   const solidityEntries: { filePath: string; source: string; analysis: string }[] = [];
   for (const filePath of state.scope) {
     const source = readFile(filePath).slice(0, MAX_SOL_CHARS);
     if (!source) continue;
-    const analysis = await analyzeSolidityFile(source, "full");
+
+    const ranking = state.fileRankings.find((r) => r.filePath === filePath);
+    const mode = ranking && ranking.importance >= 4 ? "full" : "short";
+    const analysis = await analyzeSolidityFile(source, mode, filePath, ranking?.importance);
     solidityEntries.push({ filePath, source, analysis });
   }
 
-  // Read documentation files
   const docEntries: { filePath: string; content: string }[] = [];
   for (const filePath of state.docs) {
     const content = readFile(filePath).slice(0, MAX_DOC_CHARS);
     if (content) docEntries.push({ filePath, content });
   }
 
-  // Build the LLM input
   const parts: string[] = [];
 
   if (docEntries.length > 0) {
@@ -111,21 +133,17 @@ const gatherContext: GraphNode<typeof AuditorState> = async (state) => {
     }
   }
 
-  parts.push("## Structural Analysis (auto-generated)\n");
-  for (const { filePath, analysis } of solidityEntries) {
-    parts.push(`### ${filePath}\n${analysis}`);
-  }
-
-  parts.push("## Contract Source Code\n");
-  for (const { filePath, source } of solidityEntries) {
-    parts.push(`### ${filePath}\n\`\`\`solidity\n${source}\n\`\`\``);
+  parts.push("## Structural Analysis\n");
+  for (const { analysis } of solidityEntries) {
+    parts.push(analysis);
   }
 
   const model = llm.withStructuredOutput(z.object({ context: z.string() }));
   const result = await model.invoke([new SystemMessage(GATHER_CONTEXT_PROMPT), new HumanMessage(parts.join("\n\n"))]);
 
-  logger.info(`gatherContext: context built (${parts.join("\n\n").length} chars)`);
   logger.debug(`gatherContext: full context:\n${parts.join("\n\n")}`);
+  logger.info(`gatherContext: context built (${result.context.length} chars)`);
+  logger.debug(`gatherContext: compact context:\n${result.context}`);
 
   return { repoContext: result.context };
 };

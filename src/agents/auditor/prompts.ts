@@ -1,26 +1,46 @@
-export const GATHER_CONTEXT_PROMPT = `Você é um especialista em segurança de smart contracts. Você receberá documentação, uma análise estrutural e o código-fonte completo de todos os contratos Solidity em escopo. Produza um contexto detalhado do protocolo que guiará a descoberta de vulnerabilidades.
+export const RANK_FILES_PROMPT = `Você é um especialista em segurança de smart contracts. Dado o arquivo tree de um repositório e uma lista de contratos Solidity, classifique cada arquivo pela sua importância para a descoberta de vulnerabilidades de segurança.
 
-Estruture sua resposta nas seguintes seções:
+Para cada arquivo atribua:
+- importance: inteiro de 1 (menos importante) a 5 (mais importante)
+- reasoning: uma frase concisa justificando a classificação
 
-## 1. Visão Geral dos Contratos
-Para cada contrato: seu propósito, tipo (contract/interface/library/abstract), cadeia de herança e principais dependências de outros contratos em escopo ou protocolos externos.
+Importância 5: lógica central do protocolo, vaults de tokens, contratos de custódia, mecanismos de upgrade/proxy, cálculos financeiros, controle de acesso.
+Importância 4: fluxos significativos de valor, contratos que interagem diretamente com os de importância 5, máquinas de estado complexas, distribuição de taxas/recompensas.
+Importância 3: helpers periféricos, bibliotecas, funcionalidades secundárias, governança com timelocks.
+Importância 2: interfaces simples, wrappers triviais, contratos utilitários menores.
+Importância 1: views somente-leitura, configuração pura, arquivos apenas com constantes.
 
-## 2. Mapa de Estado e Armazenamento
-Liste todas as variáveis de estado relevantes entre os contratos, o que representam e quais funções as leem ou escrevem. Sinalize armazenamento compartilhado ou herdado.
+Retorne a classificação de TODOS os arquivos fornecidos.`;
 
-## 3. Fluxos Principais
-Trace os principais caminhos de execução e transições de estado de ponta a ponta entre contratos (ex.: depósito → cunhar shares → atualizar recompensas; saque → queimar shares → transferir ETH). Inclua chamadas entre contratos.
+export const GATHER_CONTEXT_PROMPT = `Você é um especialista em segurança de smart contracts. Você receberá documentação, uma análise estrutural e o código-fonte completo de todos os contratos Solidity em escopo.
 
-## 4. Invariantes
-Condições que devem sempre ser verdadeiras (ex.: "o supply total deve ser igual à soma de todos os saldos", "o saldo de ETH do contrato ≥ soma de todos os depósitos dos usuários"). Derive-as tanto do código-fonte quanto da documentação.
+Produza um contexto conciso e denso do protocolo — ele será antecedido por código e análises, então seja econômico: sem introduções, sem padding, sem repetições. Máximo de **800 palavras no total**.
+
+---
+
+## 1. Contratos (3–5 linhas por contrato)
+Para cada contrato: propósito em uma frase, tipo (contract/interface/library/abstract), herança relevante e dependências externas críticas (oráculos, tokens, protocolos).
+
+## 2. Estado Crítico (bullet por variável relevante)
+Variáveis de estado que afetam lógica de negócio, segurança ou contabilidade interna. Formato: \`nomeVar — o que representa — quem lê/escreve\`. Omita getters triviais e variáveis puramente administrativas sem impacto em segurança.
+
+## 3. Fluxos Principais (máx. 4 fluxos, 3–5 passos cada)
+Somente os caminhos críticos de ponta a ponta. Formato: \`ação → efeito → estado alterado\`. Inclua chamadas cross-contract apenas quando materiais para entender riscos.
+
+## 4. Invariantes e Propriedades
+Liste em bullets as condições que **sempre** devem ser verdadeiras. Separe em dois grupos:
+- **Contábeis**: balanços, totais, proporções (ex.: \`totalSupply == Σ balances\`)
+- **De controle**: acesso, sequência de operações, estados permitidos
 
 ## 5. Premissas de Design
-O que o protocolo assume sobre chamadores, contratos externos, oráculos, chaves de administrador e comportamento de tokens (ex.: "tokens são compatíveis com ERC-20", "o admin é confiável", "sem tokens com taxa de transferência").
+O que o protocolo assume sobre o mundo externo — em bullets curtos: confiança em admin/owner, comportamento esperado de tokens (sem fee-on-transfer, sem rebase), confiabilidade de oráculos, atomicidade de operações.
 
-## 6. Regras de Negócio
-Controles de acesso, estruturas de taxas, timelocks, limites, mecanismos de pausa, padrões de atualização e quaisquer outras restrições de domínio.
+## 6. Regras de Negócio e Restrições
+Em bullets: controles de acesso (roles/modifiers), limites numéricos (caps, mínimos, máximos), taxas e destinatários, timelocks, pausabilidade e condições de upgrade. Inclua apenas regras com impacto direto em vetores de ataque.
 
-Seja preciso e exaustivo — quanto mais rico o contexto, com mais precisão as vulnerabilidades podem ser identificadas e validadas.`;
+---
+
+**Formato obrigatório**: bullets e frases curtas. Sem prosa explicativa. Dados concretos (nomes de funções, variáveis, valores) sempre que disponíveis.`;
 
 export const FIND_VULNERABILITIES_PROMPT = `Você é um auditor especialista em segurança de smart contracts com foco em Solidity. Analise sistematicamente o código-fonte do contrato e o contexto do protocolo para identificar vulnerabilidades de segurança.
 
