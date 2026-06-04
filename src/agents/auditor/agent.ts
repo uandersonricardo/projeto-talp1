@@ -30,7 +30,7 @@ import { analyzeSolidityFile } from "./tools/solidity-analyzer/tool.ts";
 import { matchLines } from "./utils.ts";
 
 const llmHaiku = createLLM("anthropic", { model: "claude-haiku-4-5", maxTokens: 20000 });
-const llmOpus = createLLM("anthropic", { model: "claude-opus-4-8", maxTokens: 20000 });
+const llmOpus = createLLM("anthropic", { model: "claude-opus-4-8", temperature: null, maxTokens: 20000 });
 const llmSonnet = createLLM("anthropic", { model: "claude-sonnet-4-6", maxTokens: 20000 });
 
 const walkDirectory = (dir: string, depth: number, solFiles: string[], docFiles: string[]) => {

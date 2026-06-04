@@ -7,7 +7,7 @@ export type LLMProvider = "google" | "openrouter" | "anthropic";
 
 export interface LLMOptions {
   model?: string;
-  temperature?: number;
+  temperature?: number | null;
   maxTokens?: number;
 }
 
@@ -18,7 +18,7 @@ export function createLLM(overrideProvider?: LLMProvider, options?: LLMOptions):
     case "openrouter":
       return new ChatOpenRouter({
         model: options?.model || process.env.OPENROUTER_MODEL || "google/gemini-3.1-flash-lite",
-        temperature: options?.temperature ?? 0.2,
+        ...(options?.temperature !== null && { temperature: options?.temperature ?? 0.2 }),
         apiKey: process.env.OPENROUTER_API_KEY,
         maxTokens: options?.maxTokens ?? 4096,
       });
@@ -26,7 +26,7 @@ export function createLLM(overrideProvider?: LLMProvider, options?: LLMOptions):
     case "anthropic":
       return new ChatAnthropic({
         model: options?.model || process.env.ANTHROPIC_MODEL || "claude-sonnet-4-6",
-        temperature: options?.temperature ?? 0.2,
+        ...(options?.temperature !== null && { temperature: options?.temperature ?? 0.2 }),
         apiKey: process.env.ANTHROPIC_API_KEY,
         maxTokens: options?.maxTokens ?? 4096,
       });
@@ -36,7 +36,7 @@ export function createLLM(overrideProvider?: LLMProvider, options?: LLMOptions):
       return new ChatGoogleGenerativeAI({
         apiKey: process.env.GOOGLE_API_KEY || "",
         model: options?.model || process.env.MODEL_NAME || "gemini-2.5-flash",
-        temperature: options?.temperature ?? 0.2,
+        ...(options?.temperature !== null && { temperature: options?.temperature ?? 0.2 }),
         maxOutputTokens: options?.maxTokens ?? 4096,
       });
   }
