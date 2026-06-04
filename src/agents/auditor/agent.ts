@@ -29,7 +29,9 @@ import { buildRepoTree } from "./tools/repo-tree/tool.ts";
 import { analyzeSolidityFile } from "./tools/solidity-analyzer/tool.ts";
 import { matchLines } from "./utils.ts";
 
-const llm = createLLM();
+const llmHaiku = createLLM("anthropic", { model: "claude-haiku-4-5", maxTokens: 20000 });
+const llmOpus = createLLM("anthropic", { model: "claude-opus-4-8", maxTokens: 20000 });
+const llmSonnet = createLLM("anthropic", { model: "claude-sonnet-4-6", maxTokens: 20000 });
 
 const walkDirectory = (dir: string, depth: number, solFiles: string[], docFiles: string[]) => {
   if (depth > MAX_DEPTH) return;
@@ -79,7 +81,7 @@ const defineScope: GraphNode<typeof AuditorState> = async (state) => {
   logger.info("defineScope: ranking files by importance");
 
   const RankFilesSchema = z.object({ rankings: z.array(FileRankingSchema) });
-  const rankingModel = llm.withStructuredOutput(RankFilesSchema);
+  const rankingModel = llmHaiku.withStructuredOutput(RankFilesSchema);
 
   const { rankings } = await rankingModel.invoke([
     new SystemMessage(RANK_FILES_PROMPT),
@@ -138,7 +140,7 @@ const gatherContext: GraphNode<typeof AuditorState> = async (state) => {
     parts.push(analysis);
   }
 
-  const model = llm.withStructuredOutput(z.object({ context: z.string() }));
+  const model = llmHaiku.withStructuredOutput(z.object({ context: z.string() }));
   const result = await model.invoke([new SystemMessage(GATHER_CONTEXT_PROMPT), new HumanMessage(parts.join("\n\n"))]);
 
   logger.debug(`gatherContext: full context:\n${parts.join("\n\n")}`);
@@ -149,7 +151,7 @@ const gatherContext: GraphNode<typeof AuditorState> = async (state) => {
 };
 
 const findVulnerabilities: GraphNode<typeof AuditorState> = async (state) => {
-  const model = llm.withStructuredOutput(z.object({ findings: z.array(CandidateFindingSchema) }));
+  const model = llmOpus.withStructuredOutput(z.object({ findings: z.array(CandidateFindingSchema) }));
 
   const previousFeedback =
     state.judgeReviews.length > 0
@@ -212,7 +214,7 @@ const judgeFindings: GraphNode<typeof AuditorState> = async (state) => {
     };
   }
 
-  const model = llm.withStructuredOutput(JudgeReviewSchema);
+  const model = llmSonnet.withStructuredOutput(JudgeReviewSchema);
 
   logger.info(`judgeFindings: reviewing ${state.candidateFindings.length} candidate finding(s) in parallel`);
 
