@@ -4,7 +4,7 @@ import { writeFile, access } from "fs/promises";
 import { join } from "path";
 
 const execAsync  = promisify(exec);
-const SANDBOX = process.env.SANDBOX_DIR || "/tmp/poc-sandbox";
+const DEFAULT_SANDBOX = process.env.SANDBOX_DIR || "/tmp/poc-sandbox";
 const TIMEOUT_MS = 60_000;
 
 export interface FoundryResult {
@@ -18,27 +18,36 @@ export interface FoundryResult {
 /**
  * Garante que o sandbox Foundry existe e está inicializado.
  */
-async function ensureSandbox() {
+async function ensureSandbox(sandboxDir: string) {
   try {
-    await access(join(SANDBOX, "foundry.toml"));
+    await access(join(sandboxDir, "foundry.toml"));
   } catch {
-    console.log("[foundryRunner] Sandbox não encontrado. Inicializando...");
+    console.log(`[foundryRunner] Sandbox em ${sandboxDir} não encontrado. Inicializando...`);
     // Caminho absoluto para o script de setup (assume execução da raiz do projeto)
-    await execAsync("./scripts/setup-sandbox.sh");
+    await execAsync("./scripts/setup-sandbox.sh", { env: { ...process.env, SANDBOX_DIR: sandboxDir } });
   }
 }
 
-export async function runFoundry(solidityCode: string): Promise<FoundryResult> {
-  await ensureSandbox();
+export async function runFoundry(solidityCode: string, sandboxDir: string = DEFAULT_SANDBOX): Promise<FoundryResult> {
+  await ensureSandbox(sandboxDir);
+  
+  // Ensure test directory exists
+  const testDir = join(sandboxDir, "test");
+  try {
+    await access(testDir);
+  } catch {
+    await execAsync(`mkdir -p "${testDir}"`);
+  }
   
   // Escrever o arquivo no sandbox
-  await writeFile(`${SANDBOX}/test/Exploit.t.sol`, solidityCode, "utf-8");
+  const testPath = join(testDir, "Exploit.t.sol");
+  await writeFile(testPath, solidityCode, "utf-8");
 
   try {
     const { stdout, stderr } = await execAsync(
       "forge test --match-contract ExploitTest -vvvv",
       { 
-        cwd: SANDBOX, 
+        cwd: sandboxDir, 
         timeout: TIMEOUT_MS, 
         env: { ...process.env, PATH: `${process.env.HOME}/.foundry/bin:${process.env.PATH}` } 
       }

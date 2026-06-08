@@ -14,6 +14,11 @@ export const PoCStateAnnotation = Annotation.Root({
     reducer: (_, y) => y,           // overwrite — always latest version
   }),
 
+  vulnerabilityAnalysis: Annotation<string>({
+    default: () => "",
+    reducer: (_, y) => y,           // overwrite
+  }),
+
   executionLogs: Annotation<string[]>({
     default: () => [],
     reducer: (x, y) => x.concat(y), // append — never lose previous logs

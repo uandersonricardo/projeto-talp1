@@ -9,7 +9,7 @@ import { VulnerabilityReport, PoCResult } from "./types.js";
 export async function runPoCGenerator(report: VulnerabilityReport): Promise<PoCResult> {
   console.log(`[runPoCGenerator] Iniciando para: ${report.id} — ${report.title}`);
 
-  const finalState = await testerAgent.invoke({ report });
+  const finalState = await testerAgent.invoke({ report }, { recursionLimit: 100 });
 
   const result: PoCResult = {
     reportId:      report.id,

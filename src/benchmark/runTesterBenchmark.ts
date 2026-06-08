@@ -1,0 +1,302 @@
+import fs from "fs/promises";
+import path from "path";
+import { exec } from "child_process";
+import { promisify } from "util";
+import { runPoCGenerator } from "../agents/tester/index.js";
+import { VulnerabilityReport } from "../agents/tester/types.js";
+import "dotenv/config";
+
+const execAsync = promisify(exec);
+const DATASET_PATH = "Proof-of-Patch-only-dataset";
+const METADATA_FILE = path.join(DATASET_PATH, "dataset_metadata.json");
+const SUMMARY_FILE = "data/benchmark_summary.json";
+
+/**
+ * Extracts the likely vulnerable file path from annotation text.
+ * Looks for paths ending in .sol or github links.
+ */
+/**
+ * Extracts the likely vulnerable file path from annotation text.
+ */
+function extractVulnerableFilePath(text: string): string | null {
+  // Matches GitHub blob links: /blob/branch/path/to/File.sol
+  const githubBlobRegex = /\/blob\/[^/]+\/([^#\s]+\.sol)/g;
+  let match;
+  if ((match = githubBlobRegex.exec(text)) !== null) {
+    return match[1];
+  }
+
+  // Fallback to general .sol paths
+  const solPathRegex = /(?:^|[\s])([a-zA-Z0-9._/-]+\.sol)(?:#L\d+)?/g;
+  const paths: string[] = [];
+  while ((match = solPathRegex.exec(text)) !== null) {
+    const p = match[1];
+    if (!p.includes("test/") && !p.includes("Test.sol")) {
+      paths.push(p);
+    }
+  }
+
+  // Prioritize paths containing "src"
+  const srcPath = paths.find(p => p.includes("src/"));
+  return srcPath || (paths.length > 0 ? paths[0] : null);
+}
+
+/**
+ * Recursively finds a file by name within a directory, prioritizing src/
+ */
+async function findFileRecursively(dir: string, fileName: string): Promise<string | null> {
+  const entries = await fs.readdir(dir, { withFileTypes: true });
+  const subdirs: string[] = [];
+  
+  // Check files in current dir first
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isFile() && entry.name === fileName) {
+      return fullPath;
+    }
+    if (entry.isDirectory() && entry.name !== "lib" && entry.name !== "node_modules") {
+      subdirs.push(fullPath);
+    }
+  }
+
+  // Prioritize "src" subdirectory if it exists
+  const srcDir = subdirs.find(d => path.basename(d) === "src");
+  if (srcDir) {
+    const found = await findFileRecursively(srcDir, fileName);
+    if (found) return found;
+  }
+
+  // Check other subdirs
+  for (const subdir of subdirs) {
+    if (path.basename(subdir) === "src") continue; // Already checked
+    const found = await findFileRecursively(subdir, fileName);
+    if (found) return found;
+  }
+
+  // Fallback to lib if nothing else found
+  const libDir = entries.find(e => e.isDirectory() && e.name === "lib");
+  if (libDir) {
+    return findFileRecursively(path.join(dir, "lib"), fileName);
+  }
+
+  return null;
+}
+
+async function main() {
+  const metadataContent = await fs.readFile(METADATA_FILE, "utf-8");
+  const metadata = JSON.parse(metadataContent);
+  const findingsIds = Object.keys(metadata);
+
+  const limit = process.argv[2] ? parseInt(process.argv[2]) : findingsIds.length;
+
+  console.log(`[Benchmark] Starting evaluation (Total available: ${findingsIds.length}, Limit: ${limit})...`);
+
+  const results: any[] = [];
+  let processedCount = 0;
+
+  for (const id of findingsIds) {
+    if (processedCount >= limit) break;
+
+    const finding = metadata[id];
+    
+    if (finding.benchmark_results?.vuln_status === "success" && !process.env.FORCE_RERUN) {
+      console.log(`[${id}] Skipping: already successful.`);
+      processedCount++;
+      continue;
+    }
+
+    console.log(`\n--- [${id}] ${finding.repo_name} ---`);
+    processedCount++;
+
+    try {
+      const annotationPath = path.join(DATASET_PATH, finding.annotations);
+      let annotationText = "";
+      try {
+        annotationText = await fs.readFile(annotationPath, "utf-8");
+      } catch (e) {
+        console.warn(`[${id}] Annotation file not found at ${annotationPath}`);
+      }
+      
+      const targetDir = path.join(process.cwd(), DATASET_PATH, finding.target_directory);
+      
+      // STEP 1: Accurate Source Code Resolution
+      const extractedPath = extractVulnerableFilePath(annotationText);
+      let mainContractPath = "";
+      let relativeContractPath = finding.main_contract;
+
+      if (extractedPath) {
+        const directPath = path.join(targetDir, extractedPath);
+        try {
+          await fs.access(directPath);
+          mainContractPath = directPath;
+          relativeContractPath = extractedPath;
+        } catch {
+          const fileName = path.basename(extractedPath);
+          console.log(`[${id}] File not found at ${extractedPath}, searching for ${fileName} recursively...`);
+          const foundPath = await findFileRecursively(targetDir, fileName);
+          if (foundPath) {
+            mainContractPath = foundPath;
+            relativeContractPath = path.relative(targetDir, foundPath);
+          }
+        }
+      }
+
+      if (!mainContractPath) {
+        mainContractPath = path.join(targetDir, finding.main_contract);
+        relativeContractPath = finding.main_contract;
+      }
+      
+      console.log(`[${id}] Using source file: ${relativeContractPath}`);
+
+      let sourceCode = "";
+      try {
+        sourceCode = await fs.readFile(mainContractPath, "utf-8");
+      } catch (e) {
+        console.warn(`[${id}] Contract not found at ${mainContractPath}, falling back to metadata.main_contract`);
+        try {
+            sourceCode = await fs.readFile(path.join(targetDir, finding.main_contract), "utf-8");
+        } catch (e2) {
+            throw new Error(`Could not find any source code for ${id}`);
+        }
+      }
+
+      const tempVulnDir = path.join(process.cwd(), "temp_vuln_run", id);
+      console.log(`[${id}] Preparing isolated sandbox at ${tempVulnDir}...`);
+      await execAsync(`mkdir -p temp_vuln_run && rm -rf ${tempVulnDir} && cp -r ${targetDir} ${tempVulnDir}`);
+      await execAsync(`rm -f ${tempVulnDir}/.git`);
+
+      // STEP 1.5: Reference Test Resolution
+      let referenceTestCode = "";
+      if (finding.test_fix_commands) {
+        const match = finding.test_fix_commands.match(/--match-path\s+([^\s]+)/);
+        if (match) {
+          const testPath = path.join(targetDir, match[1]);
+          try {
+            referenceTestCode = await fs.readFile(testPath, "utf-8");
+            console.log(`[${id}] Found reference test at ${match[1]}`);
+          } catch {
+            console.warn(`[${id}] Could not read reference test at ${testPath}`);
+          }
+        }
+      }
+
+      const report: VulnerabilityReport = {
+        id: id,
+        title: `${finding.repo_name} - ${id}`,
+        severity: (finding.impact?.toLowerCase() || "medium") as any,
+        type: finding.expected_vulnerability || "unknown",
+        description: annotationText,
+        referenceTestCode: referenceTestCode,
+        affectedContract: {
+          name: relativeContractPath.split("/").pop()!.replace(".sol", ""),
+          sourceCode: sourceCode,
+          sourceFilePath: relativeContractPath
+        },
+        attackVector: "Vulnerability analysis from dataset annotations.",
+        customSandboxDir: tempVulnDir 
+      };
+
+      console.log(`[${id}] Generating PoC and running on VULNERABLE version...`);
+      const resultVuln = await runPoCGenerator(report);
+      
+      if (process.env.DEBUG_CONTEXT === "true") {
+        console.log("\n" + "=".repeat(20) + " GENERATED POC START " + "=".repeat(20));
+        console.log(resultVuln.solidityCode);
+        console.log("=".repeat(20) + " GENERATED POC END " + "=".repeat(20) + "\n");
+      }
+      
+      let statusPatch = "not_tested";
+
+      if (resultVuln.status === "success") {
+        console.log(`[${id}] Running PoC on PATCHED version to verify specificity...`);
+        
+        const tempPatchDir = path.join(process.cwd(), "temp_patch_run", id);
+        try {
+            await execAsync(`mkdir -p temp_patch_run && rm -rf ${tempPatchDir} && cp -r ${targetDir} ${tempPatchDir}`);
+            await execAsync(`rm -f ${tempPatchDir}/.git`);
+            
+            const patchSourceDir = path.join(process.cwd(), DATASET_PATH, finding.patch);
+            await execAsync(`cp -rv ${patchSourceDir}/* ${tempPatchDir}/ || true`);
+
+            const { runFoundry } = await import("../agents/tester/tools/foundryRunner.js");
+            const patchExec = await runFoundry(resultVuln.solidityCode, tempPatchDir);
+            
+            const passedOnPatch = patchExec.exitCode === 0 && patchExec.stdout.includes("ok");
+            statusPatch = passedOnPatch ? "success" : "failed";
+            
+            if (statusPatch === "failed") {
+                await execAsync(`rm -rf ${tempPatchDir}`);
+            }
+        } catch (e: any) {
+            console.error(`[${id}] Patch run error:`, e.message);
+            statusPatch = "error";
+        }
+      }
+
+      const reproducible = resultVuln.status === "success";
+      const specific = resultVuln.status === "success" && statusPatch === "failed";
+
+      finding.benchmark_results = {
+        vuln_status: resultVuln.status,
+        patch_status: statusPatch,
+        reproducibility: reproducible,
+        specificity: specific,
+        iterations: resultVuln.iterations,
+        timestamp: new Date().toISOString(),
+      };
+
+      if (resultVuln.status === "failed") {
+          finding.benchmark_results.last_vuln_error = resultVuln.executionLogs[resultVuln.executionLogs.length - 1]?.slice(0, 500);
+      }
+      
+      results.push({
+        id,
+        reproducible,
+        specific,
+        iterations: resultVuln.iterations
+      });
+
+      await fs.writeFile(METADATA_FILE, JSON.stringify(metadata, null, 2));
+      console.log(`[${id}] Result: Reproducible=${reproducible}, Specific=${specific}`);
+
+    } catch (err: any) {
+      console.error(`[${id}] Fatal Error:`, err.message);
+      finding.benchmark_results = { 
+        status: "error", 
+        error: err.message,
+        timestamp: new Date().toISOString()
+      };
+      await fs.writeFile(METADATA_FILE, JSON.stringify(metadata, null, 2));
+    }
+  }
+  
+  const total = results.length;
+  const reproCount = results.filter(r => r.reproducible).length;
+  const specCount = results.filter(r => r.specific).length;
+  const avgIter = total > 0 ? results.reduce((acc, r) => acc + r.iterations, 0) / total : 0;
+
+  const summary = {
+    timestamp: new Date().toISOString(),
+    total_processed: total,
+    reproducibility_rate: total > 0 ? (reproCount / total) * 100 : 0,
+    specificity_rate: reproCount > 0 ? (specCount / reproCount) * 100 : 0,
+    overall_ground_truth_rate: total > 0 ? (specCount / total) * 100 : 0,
+    average_iterations: avgIter
+  };
+
+  console.log("\n" + "=".repeat(50));
+  console.log("BENCHMARK SUMMARY");
+  console.log("=".repeat(50));
+  console.log(`Total Findings:      ${total}`);
+  console.log(`Reproducibility:     ${summary.reproducibility_rate.toFixed(1)}% (${reproCount}/${total})`);
+  console.log(`Specificity:         ${summary.specificity_rate.toFixed(1)}% (${specCount}/${reproCount})`);
+  console.log(`Overall Success:     ${summary.overall_ground_truth_rate.toFixed(1)}% (Verified Ground Truth)`);
+  console.log(`Avg Iterations:      ${avgIter.toFixed(2)}`);
+  console.log("=".repeat(50));
+
+  await fs.mkdir(path.dirname(SUMMARY_FILE), { recursive: true });
+  await fs.writeFile(SUMMARY_FILE, JSON.stringify({ summary, details: results }, null, 2));
+  console.log(`Summary saved to ${SUMMARY_FILE}`);
+}
+
+main().catch(console.error);

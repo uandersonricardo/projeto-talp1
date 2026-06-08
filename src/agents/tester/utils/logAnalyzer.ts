@@ -23,8 +23,8 @@ export function analyzeFoundryLog(result: FoundryResult): LogAnalysis {
 
   if (result.combined.includes("Compiler run failed")) {
     const lines = result.combined.split("\n")
-      .filter(l => l.includes("Error") || l.includes("error") || l.includes("-->"))
-      .slice(0, 10);
+      .filter(l => (l.includes("Error") || l.includes("error") || l.includes("-->")) && !l.includes("Warning"))
+      .slice(0, 30);
     return {
       category: "compiler_error",
       summary: "Erro de compilação Solidity. Verifique: interfaces faltando, assinaturas incorretas, tipos incompatíveis.",

@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-SANDBOX="/tmp/poc-sandbox"
+SANDBOX="${SANDBOX_DIR:-/tmp/poc-sandbox}"
 
 # Tenta encontrar forge no PATH se a variável não estiver definida ou falhar
 if [ -z "$FORGE_BIN" ] || [ ! -f "$FORGE_BIN" ]; then

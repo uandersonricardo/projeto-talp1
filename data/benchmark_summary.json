@@ -1,0 +1,144 @@
+{
+  "summary": {
+    "timestamp": "2026-06-07T21:36:40.793Z",
+    "total_processed": 22,
+    "reproducibility_rate": 27.27272727272727,
+    "specificity_rate": 0,
+    "overall_ground_truth_rate": 0,
+    "average_iterations": 8.181818181818182
+  },
+  "details": [
+    {
+      "id": "001",
+      "reproducible": false,
+      "specific": false,
+      "iterations": 10
+    },
+    {
+      "id": "003",
+      "reproducible": true,
+      "specific": false,
+      "iterations": 5
+    },
+    {
+      "id": "008",
+      "reproducible": true,
+      "specific": false,
+      "iterations": 5
+    },
+    {
+      "id": "009",
+      "reproducible": false,
+      "specific": false,
+      "iterations": 10
+    },
+    {
+      "id": "015",
+      "reproducible": false,
+      "specific": false,
+      "iterations": 10
+    },
+    {
+      "id": "018",
+      "reproducible": false,
+      "specific": false,
+      "iterations": 10
+    },
+    {
+      "id": "020",
+      "reproducible": false,
+      "specific": false,
+      "iterations": 10
+    },
+    {
+      "id": "032",
+      "reproducible": false,
+      "specific": false,
+      "iterations": 10
+    },
+    {
+      "id": "033",
+      "reproducible": false,
+      "specific": false,
+      "iterations": 10
+    },
+    {
+      "id": "039",
+      "reproducible": false,
+      "specific": false,
+      "iterations": 10
+    },
+    {
+      "id": "041",
+      "reproducible": false,
+      "specific": false,
+      "iterations": 10
+    },
+    {
+      "id": "042",
+      "reproducible": false,
+      "specific": false,
+      "iterations": 10
+    },
+    {
+      "id": "048",
+      "reproducible": false,
+      "specific": false,
+      "iterations": 10
+    },
+    {
+      "id": "049",
+      "reproducible": false,
+      "specific": false,
+      "iterations": 10
+    },
+    {
+      "id": "051",
+      "reproducible": true,
+      "specific": false,
+      "iterations": 1
+    },
+    {
+      "id": "054",
+      "reproducible": true,
+      "specific": false,
+      "iterations": 4
+    },
+    {
+      "id": "058",
+      "reproducible": false,
+      "specific": false,
+      "iterations": 10
+    },
+    {
+      "id": "066",
+      "reproducible": false,
+      "specific": false,
+      "iterations": 10
+    },
+    {
+      "id": "070",
+      "reproducible": false,
+      "specific": false,
+      "iterations": 10
+    },
+    {
+      "id": "077",
+      "reproducible": false,
+      "specific": false,
+      "iterations": 10
+    },
+    {
+      "id": "091",
+      "reproducible": true,
+      "specific": false,
+      "iterations": 4
+    },
+    {
+      "id": "098",
+      "reproducible": true,
+      "specific": false,
+      "iterations": 1
+    }
+  ]
+}
