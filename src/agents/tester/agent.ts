@@ -9,13 +9,16 @@ import {
   ANALYZE_VULNERABILITY_PROMPT, 
   POC_INITIAL_PROMPT, 
   POC_COMPILE_FIX_PROMPT, 
-  POC_TEST_FIX_PROMPT 
+  POC_TEST_FIX_PROMPT,
+  POC_MINIMAL_INTERFACE_PROMPT
 } from "./prompts/system.js";
 import { extractSolidity } from "./utils/extractSolidity.js";
 import { runFoundry } from "./tools/foundryRunner.js";
 import { analyzeFoundryLog } from "./utils/logAnalyzer.js";
-import { extractConstructor } from "./utils/parserUtils.js";
+import { extractProjectContext } from "./utils/projectContextExtractor.js";
+import { createMissingDependencyStubs } from "./utils/dependencyStubber.js";
 import { analyzeSolidityFile } from "../auditor/tools/solidity-analyzer-tool.js";
+import { extractConstructor } from "./utils/parserUtils.js";
 
 const MAX_ITERATIONS = 10;
 
@@ -38,11 +41,40 @@ async function oracleNode(state: PoCState): Promise<Partial<PoCState>> {
     referenceTestHelpers = await analyzeSolidityFile(state.report.referenceTestCode, "short");
   }
 
+  // STEP 4: Extract project-level context (remappings, existing test imports)
+  let projectRemappings = "";
+  let projectTestImports = "";
+  let projectTestFilePath: string | null = null;
+  if (state.report.customSandboxDir) {
+    console.log("[oracleNode] extracting project context (remappings, test imports)...");
+    try {
+      const projectCtx = await extractProjectContext(state.report.customSandboxDir);
+      projectRemappings = projectCtx.remappings;
+      projectTestImports = projectCtx.existingTestImports;
+      projectTestFilePath = projectCtx.existingTestFilePath;
+      if (projectRemappings) console.log("[oracleNode] found remappings:", projectRemappings.split("\n").length, "entries");
+      if (projectTestImports) console.log("[oracleNode] found existing test imports from:", projectTestFilePath);
+    } catch (e) {
+      console.warn("[oracleNode] could not extract project context:", (e as Error).message);
+    }
+
+    // STEP 5: Pre-flight dependency stub creation
+    // Run a quick forge build probe to detect missing dependencies, then stub them
+    try {
+      await createMissingDependencyStubs(state.report.customSandboxDir);
+    } catch (e) {
+      console.warn("[oracleNode] stub creation failed (non-fatal):", (e as Error).message);
+    }
+  }
+
   const oracleContext: OracleContext = { 
     solidityScaffold,
     constructorInfo: constructorInfo?.parameters,
     targetContractAPI,
-    referenceTestHelpers
+    referenceTestHelpers,
+    projectRemappings,
+    projectTestImports,
+    projectTestFilePath,
   };
 
   console.log("[oracleNode] scaffold gerado, context built.");
@@ -70,6 +102,16 @@ ${state.oracleContext!.targetContractAPI}
 
 ${state.oracleContext!.referenceTestHelpers ? `### Environment Helpers:
 ${state.oracleContext!.referenceTestHelpers}` : ""}
+
+${state.report.patchDiff ? `### PATCH DIFF (what the fix changes — use this to write a SPECIFIC assertion):
+The following diff shows exactly what changed between the vulnerable and patched version.
+Your generated PoC MUST produce an assertion that:
+- PASSES on the vulnerable version (bug exists)
+- FAILS on the patched version (bug is fixed)
+
+\`\`\`diff
+${state.report.patchDiff}
+\`\`\`` : ""}
 `;
 
   const response = await llm.invoke([
@@ -107,6 +149,16 @@ ${oracleContext!.targetContractAPI}
 ${oracleContext!.referenceTestHelpers ? `### Test Helpers:
 ${oracleContext!.referenceTestHelpers}` : ""}
 
+${oracleContext!.projectRemappings ? `### Project Remappings (use these for import paths):
+\`\`\`
+${oracleContext!.projectRemappings}
+\`\`\`` : ""}
+
+${oracleContext!.projectTestImports ? `### Import Pattern from Existing Test (${oracleContext!.projectTestFilePath}):
+\`\`\`solidity
+${oracleContext!.projectTestImports}
+\`\`\`` : ""}
+
 ### Scaffold:
 \`\`\`solidity
 ${oracleContext!.solidityScaffold}
@@ -114,14 +166,25 @@ ${oracleContext!.solidityScaffold}
 `;
   } else {
     // PASS 3+: FIXING ERRORS (BRANCHING)
-    const isCompilerError = lastError?.includes("[COMPILER_ERROR]");
-    currentSystemPrompt = isCompilerError ? POC_COMPILE_FIX_PROMPT : POC_TEST_FIX_PROMPT;
+    const isCompilerError = lastError?.includes("[COMPILER_ERROR]") || lastError?.includes("[INVALID_CODE]");
+    const useMinimalStrategy = state.compileFailures >= 3;
+    
+    if (useMinimalStrategy && isCompilerError) {
+      // ESCAPE HATCH: After 3 compile failures, switch to zero-import minimal interface strategy
+      currentSystemPrompt = POC_MINIMAL_INTERFACE_PROMPT;
+      console.log("[testerAgent] Switching to MINIMAL_INTERFACE strategy after", state.compileFailures, "compile failures");
+    } else {
+      currentSystemPrompt = isCompilerError ? POC_COMPILE_FIX_PROMPT : POC_TEST_FIX_PROMPT;
+    }
 
     userMessage = `The previous PoC failed.
     
 Error Category: ${isCompilerError ? "Compilation Failure" : "Execution/Logic Failure"}
-Forge Output:
-${executionLogs[executionLogs.length - 1]?.slice(0, 3000) ?? "sem logs"}
+Error Details:
+${lastError ?? ""}
+
+Forge Output (last attempt):
+${executionLogs[executionLogs.length - 1]?.slice(0, 3500) ?? "sem logs"}
 
 Previous Code:
 \`\`\`solidity
@@ -131,10 +194,20 @@ ${pocCode}
 Analysis of the bug:
 ${vulnerabilityAnalysis}
 
+${!useMinimalStrategy && oracleContext!.projectRemappings ? `Project Remappings (use these for import paths):
+\`\`\`
+${oracleContext!.projectRemappings}
+\`\`\`` : ""}
+
+${!useMinimalStrategy && oracleContext!.projectTestImports ? `Import Pattern from Existing Test (${oracleContext!.projectTestFilePath}):
+\`\`\`solidity
+${oracleContext!.projectTestImports}
+\`\`\`` : ""}
+
 Fix the code. Return the entire file.`;
   }
 
-  console.log(`[testerAgent] generatePoCNode iteração ${iterations + 1}, isRetry=${isRetry}, mode=${isRetry ? (lastError?.includes("[COMPILER_ERROR]") ? "FIX_COMPILE" : "FIX_LOGIC") : "INITIAL"}`);
+  console.log(`[testerAgent] generatePoCNode iteração ${iterations + 1}, isRetry=${isRetry}, compileFailures=${state.compileFailures}, mode=${isRetry ? (lastError?.includes("COMPILER_ERROR") || lastError?.includes("INVALID_CODE") ? (state.compileFailures >= 3 ? "MINIMAL_INTERFACE" : "FIX_COMPILE") : "FIX_LOGIC") : "INITIAL"}`);
 
   // DEBUG: Output context before sending to LLM
   if (process.env.DEBUG_CONTEXT === "true") {
@@ -166,22 +239,31 @@ async function runFoundryNode(state: PoCState): Promise<Partial<PoCState>> {
   const isMissingContract = !trimmedCode.includes("contract ExploitTest");
   const isMissingTest = !trimmedCode.includes("function test_Exploit()");
   const isPlaceholder = trimmedCode.includes("TODO: implementar exploit");
+  const hasStrongAssertion = (
+    trimmedCode.includes("assertEq") || 
+    trimmedCode.includes("assertGt") ||
+    trimmedCode.includes("assertLt") ||
+    trimmedCode.includes("assertLe") ||
+    trimmedCode.includes("assertGe") ||
+    trimmedCode.includes("assertNotEq") ||
+    trimmedCode.includes("assertApproxEq")
+  );
   const isLazyTest = (
     trimmedCode.includes("assertTrue(true") || 
     trimmedCode.includes("assert(true") || 
     trimmedCode.includes("assert(1 == 1")
-  ) && !trimmedCode.includes("assertEq") && !trimmedCode.includes("assertGt") && !trimmedCode.includes("assertLe") && !trimmedCode.includes("assertGe") && !trimmedCode.includes("assertNotEq");
+  ) && !hasStrongAssertion;
 
   if (isMissingCode || isMissingContract || isMissingTest || isPlaceholder || isLazyTest) {
-    const summary = state.lastError ?? (isMissingCode
-      ? "Código Solidity ausente. O LLM não retornou o arquivo do exploit."
+    const summary = (isMissingCode
+      ? "[INVALID_CODE] No Solidity code returned. The LLM must output a complete solidity code block."
       : isMissingContract
-        ? "Contrato ExploitTest não encontrado no arquivo."
+        ? "[INVALID_CODE] No 'contract ExploitTest' found. The test contract MUST be named ExploitTest."
         : isMissingTest
-          ? "Função test_Exploit() não encontrada no arquivo."
+          ? "[INVALID_CODE] No 'function test_Exploit()' found. The test function MUST be named test_Exploit()."
           : isPlaceholder
-            ? "Exploit não implementado (placeholder TODO ainda presente)."
-            : "Exploit muito fraco (assertTrue(true)). Você deve provar a vulnerabilidade com uma asserção real (ex: assertEq, assertGt)."
+            ? "[INVALID_CODE] Exploit has TODO placeholder. You must implement the actual exploit logic."
+            : "[WEAK_ASSERTION] Only assertTrue(true) found — this never proves the vulnerability. Add a meaningful assertion like assertGt(attacker.balance, initialBalance) or assertEq(owner, attacker)."
     );
     const status = state.iterations >= MAX_ITERATIONS ? "failed" : "running";
     return {
@@ -194,9 +276,6 @@ async function runFoundryNode(state: PoCState): Promise<Partial<PoCState>> {
   const result   = await runFoundry(state.pocCode, state.report.customSandboxDir);
   const analysis = analyzeFoundryLog(result);
   const noTestsFound = result.combined.includes("No tests found");
-  const summary = noTestsFound
-    ? "Forge não encontrou nenhum teste. Verifique se o contrato se chama ExploitTest e se existe test_Exploit()."
-    : analysis.summary;
   const passed   = result.exitCode === 0 && result.stdout.includes("ok") && !noTestsFound;
   const isLastAttempt = state.iterations >= MAX_ITERATIONS;
 
@@ -213,10 +292,22 @@ async function runFoundryNode(state: PoCState): Promise<Partial<PoCState>> {
     console.log(`[testerAgent] Falha detectada: ${analysis.summary}`);
   }
 
+  // Build lastError: include relevant error lines prominently so the LLM sees them at the top of the fix prompt
+  let lastErrorMsg: string | null = null;
+  if (!passed) {
+    const relevantLinesText = analysis.relevantLines.length > 0
+      ? `\nKey error lines:\n${analysis.relevantLines.slice(0, 15).join("\n")}`
+      : "";
+    lastErrorMsg = `${analysis.summary}${relevantLinesText}`;
+  }
+
+  const isCompileError = analysis.category === "compiler_error";
+  
   return {
     executionLogs: [result.combined],   // reducer append
-    lastError: passed ? null : `[${analysis.category.toUpperCase()}] ${summary}`,
+    lastError: lastErrorMsg,
     status,
+    compileFailures: isCompileError && !passed ? 1 : 0, // additive reducer counts each compile failure
   };
 }
 

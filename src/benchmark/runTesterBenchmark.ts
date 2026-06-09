@@ -12,6 +12,82 @@ const METADATA_FILE = path.join(DATASET_PATH, "dataset_metadata.json");
 const SUMMARY_FILE = "data/benchmark_summary.json";
 
 /**
+ * Smartly applies a patch by matching each patched .sol file to its
+ * counterpart in tempPatchDir by stripping 1-3 directory prefix levels.
+ * This handles nested patch structures like patches/003/2023-07-pooltogether/vault/src/Vault.sol
+ * when tempPatchDir expects src/Vault.sol.
+ */
+async function applyPatchSmart(patchSourceDir: string, tempPatchDir: string): Promise<void> {
+  let stdout = "";
+  try {
+    ({ stdout } = await execAsync(
+      `find "${patchSourceDir}" -name "*.sol" -not -path "*/lib/*" -not -path "*/node_modules/*" -type f`,
+      { timeout: 15_000 }
+    ));
+  } catch {
+    return;
+  }
+  const patchFiles = stdout.trim().split("\n").filter(Boolean);
+  let applied = 0;
+
+  for (const patchFile of patchFiles) {
+    const relFromPatch = path.relative(patchSourceDir, patchFile);
+    const parts = relFromPatch.split("/");
+
+    // Try stripping 1, 2, 3 prefix levels to find matching file in tempPatchDir
+    let matched = false;
+    for (let strip = 1; strip <= 3 && strip < parts.length; strip++) {
+      const stripped = parts.slice(strip).join("/");
+      const targetPath = path.join(tempPatchDir, stripped);
+      const exists = await fs.access(targetPath).then(() => true).catch(() => false);
+      if (exists) {
+        await execAsync(`cp "${patchFile}" "${targetPath}"`);
+        console.log(`  [patch] Applied: ${stripped}`);
+        applied++;
+        matched = true;
+        break;
+      }
+    }
+    if (!matched) {
+      console.log(`  [patch] No match found for: ${relFromPatch}`);
+    }
+  }
+  console.log(`  [patch] Applied ${applied}/${patchFiles.length} patch files.`);
+}
+
+/**
+ * Computes a unified diff of the main contract between vulnerable and patched versions.
+ * Uses the same strip-depth matching as applyPatchSmart.
+ */
+async function computePatchDiff(
+  patchSourceDir: string,
+  mainContractPath: string,
+  targetDir: string,
+  relativeContractPath: string
+): Promise<string> {
+  let diffOut = "";
+  try {
+    let stdout = "";
+    try {
+      ({ stdout } = await execAsync(
+        `find "${patchSourceDir}" -name "${path.basename(relativeContractPath)}" -not -path "*/lib/*" -type f`,
+        { timeout: 10_000 }
+      ));
+    } catch { return ""; }
+
+    const patchedFile = stdout.trim().split("\n")[0];
+    if (!patchedFile) return "";
+
+    const { stdout: diff } = await execAsync(
+      `diff -u "${mainContractPath}" "${patchedFile}"`,
+      { timeout: 10_000 }
+    ).catch(({ stdout: s }: any) => ({ stdout: s as string }));
+    diffOut = (diff || "").trim().slice(0, 3000);
+  } catch { /* ignore */ }
+  return diffOut;
+}
+
+/**
  * Extracts the likely vulnerable file path from annotation text.
  * Looks for paths ending in .sol or github links.
  */
@@ -180,6 +256,20 @@ async function main() {
         }
       }
 
+      // STEP 2: Compute patch diff for specificity guidance
+      let patchDiff = "";
+      try {
+        const patchSourceDir = path.join(process.cwd(), DATASET_PATH, finding.patch);
+        patchDiff = await computePatchDiff(patchSourceDir, mainContractPath, targetDir, relativeContractPath);
+        if (patchDiff) {
+          console.log(`[${id}] Patch diff computed: ${patchDiff.split("\n").length} lines`);
+        } else {
+          console.log(`[${id}] No patch diff found for main contract`);
+        }
+      } catch {
+        // Patch diff is optional, ignore errors
+      }
+
       const report: VulnerabilityReport = {
         id: id,
         title: `${finding.repo_name} - ${id}`,
@@ -187,6 +277,7 @@ async function main() {
         type: finding.expected_vulnerability || "unknown",
         description: annotationText,
         referenceTestCode: referenceTestCode,
+        patchDiff: patchDiff || undefined,
         affectedContract: {
           name: relativeContractPath.split("/").pop()!.replace(".sol", ""),
           sourceCode: sourceCode,
@@ -216,16 +307,29 @@ async function main() {
             await execAsync(`rm -f ${tempPatchDir}/.git`);
             
             const patchSourceDir = path.join(process.cwd(), DATASET_PATH, finding.patch);
-            await execAsync(`cp -rv ${patchSourceDir}/* ${tempPatchDir}/ || true`);
+            // Smart patch: match each patched .sol to the right file in tempPatchDir
+            await applyPatchSmart(patchSourceDir, tempPatchDir);
 
             const { runFoundry } = await import("../agents/tester/tools/foundryRunner.js");
             const patchExec = await runFoundry(resultVuln.solidityCode, tempPatchDir);
             
-            const passedOnPatch = patchExec.exitCode === 0 && patchExec.stdout.includes("ok");
+            // Specific = PoC FAILS on patched version (exploit doesn't work anymore)
+            // i.e., exit code != 0, OR stdout doesn't contain "ok", OR test was not found
+            const passedOnPatch = (
+              patchExec.exitCode === 0 &&
+              patchExec.stdout.includes("ok") &&
+              !patchExec.stdout.includes("FAIL") &&
+              !patchExec.combined.includes("No tests found")
+            );
+            // statusPatch = "success" means PoC still works on patch (BAD, not specific)
+            // statusPatch = "failed" means PoC correctly fails on patch (GOOD, specific)
             statusPatch = passedOnPatch ? "success" : "failed";
             
             if (statusPatch === "failed") {
+                console.log(`[${id}] PoC correctly fails on PATCHED version — exploit is SPECIFIC.`);
                 await execAsync(`rm -rf ${tempPatchDir}`);
+            } else {
+                console.log(`[${id}] PoC still passes on PATCHED version — exploit is NOT specific.`);
             }
         } catch (e: any) {
             console.error(`[${id}] Patch run error:`, e.message);

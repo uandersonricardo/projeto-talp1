@@ -3,9 +3,21 @@ set -e
 
 SANDBOX="${SANDBOX_DIR:-/tmp/poc-sandbox}"
 
-# Tenta encontrar forge no PATH se a variável não estiver definida ou falhar
+# Source Foundry environment (sets PATH in non-interactive shells like Docker)
+if [ -f "$HOME/.foundry/env" ]; then
+    source "$HOME/.foundry/env"
+fi
+
+# Resolve forge binary: env var > PATH > common install locations
 if [ -z "$FORGE_BIN" ] || [ ! -f "$FORGE_BIN" ]; then
-    FORGE_BIN=$(which forge || echo "forge")
+    if command -v forge &>/dev/null; then
+        FORGE_BIN=$(command -v forge)
+    elif [ -f "$HOME/.foundry/bin/forge" ]; then
+        FORGE_BIN="$HOME/.foundry/bin/forge"
+    else
+        echo "ERROR: forge not found. Install Foundry: curl -L https://foundry.paradigm.xyz | bash"
+        exit 1
+    fi
 fi
 
 echo "Inicializando sandbox Foundry em $SANDBOX usando $FORGE_BIN..."

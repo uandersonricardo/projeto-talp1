@@ -34,6 +34,11 @@ export const PoCStateAnnotation = Annotation.Root({
     reducer: (x, y) => x + y,       // additive — incremented by +1 per call
   }),
 
+  compileFailures: Annotation<number>({
+    default: () => 0,
+    reducer: (x, y) => x + y,       // additive — incremented on each compile failure
+  }),
+
   status: Annotation<"running" | "success" | "failed" | "timeout">({
     default: () => "running",
     reducer: (_, y) => y,           // overwrite
