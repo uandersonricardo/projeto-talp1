@@ -80,8 +80,14 @@ app.post("/api/run", (c) => {
       await send("log", "[Tester] Gerando testes de prova de conceito...");
 
       if (auditorResult.findings.length > 0) {
-        const report = mapFindingToReport(auditorResult.findings[0], coderResult.contract);
+        const report = mapFindingToReport(
+          auditorResult.findings[0],
+          coderResult.contract,
+          auditorResult.repoContext   // ← now forwarded to tester
+        );
+        report.customSandboxDir = outputDir;  // ← tester runs in real project sandbox
         const testerResult = await testerAgent.invoke({ report });
+
 
         await send("log", `[Tester] Execução concluída com status: ${testerResult.status}`);
         

@@ -1,4 +1,7 @@
 import "dotenv/config";
+import fs from "fs/promises";
+import path from "path";
+
 import { StateGraph, END, START } from "@langchain/langgraph";
 import { PoCStateAnnotation, PoCState } from "./state.js";
 import { generateLocalScaffold } from "./tools/scaffoldGenerator.js";
@@ -20,7 +23,7 @@ import { createMissingDependencyStubs } from "./utils/dependencyStubber.js";
 import { analyzeSolidityFile } from "../auditor/tools/solidity-analyzer-tool.js";
 import { extractConstructor } from "./utils/parserUtils.js";
 
-const MAX_ITERATIONS = 10;
+const MAX_ITERATIONS = 6;
 
 const llm = createLLM();
 
@@ -41,7 +44,6 @@ async function oracleNode(state: PoCState): Promise<Partial<PoCState>> {
     referenceTestHelpers = await analyzeSolidityFile(state.report.referenceTestCode, "short");
   }
 
-  // STEP 4: Extract project-level context (remappings, existing test imports)
   let projectRemappings = "";
   let projectTestImports = "";
   let projectTestFilePath: string | null = null;
@@ -58,14 +60,35 @@ async function oracleNode(state: PoCState): Promise<Partial<PoCState>> {
       console.warn("[oracleNode] could not extract project context:", (e as Error).message);
     }
 
-    // STEP 5: Pre-flight dependency stub creation
-    // Run a quick forge build probe to detect missing dependencies, then stub them
+    // STEP 5: Remove existing project test files from sandbox test/ directory.
+    // Forge compiles ALL .t.sol files even when only running Exploit.t.sol.
+    // Existing tests often import missing deps (@prb/test, lib/caviar, etc.)
+    // causing compilation failures even when our Exploit.t.sol is clean.
+    // We already extracted the import context we needed — now clean up.
+    try {
+      const testDir = path.join(state.report.customSandboxDir, "test");
+      const testEntries = await fs.readdir(testDir, { withFileTypes: true }).catch(() => []);
+      let removed = 0;
+      for (const entry of testEntries) {
+        if (entry.isFile() && entry.name.endsWith(".t.sol") && entry.name !== "Exploit.t.sol") {
+          await fs.unlink(path.join(testDir, entry.name));
+          removed++;
+        }
+      }
+      if (removed > 0) console.log(`[oracleNode] Removed ${removed} existing test files from sandbox (avoids missing dep conflicts)`);
+    } catch (e) {
+      console.warn("[oracleNode] test cleanup failed (non-fatal):", (e as Error).message);
+    }
+
+    // STEP 6: Pre-flight dependency stub creation
+    // After removing conflicting test files, create stubs for any remaining missing deps
     try {
       await createMissingDependencyStubs(state.report.customSandboxDir);
     } catch (e) {
       console.warn("[oracleNode] stub creation failed (non-fatal):", (e as Error).message);
     }
   }
+
 
   const oracleContext: OracleContext = { 
     solidityScaffold,

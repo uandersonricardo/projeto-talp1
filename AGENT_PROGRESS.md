@@ -236,3 +236,128 @@ Docker image needs rebuild after code changes.
 | Overall Ground Truth | 0.0% | ~20% |
 | Avg Iterations | 7.55 | <7.0 |
 
+
+---
+
+## Production vs Benchmark Gap Analysis
+
+### What the production pipeline actually sends to the tester
+
+```
+User request
+    │
+    ▼ Coder Agent
+coderResult.contract  ← a single Solidity string (the generated contract)
+    │
+    ▼ Auditor Agent (receives repoPath with Contract.sol + README.md)
+auditorResult.findings[0]  ← ONE finding
+    │
+    ▼ mapFindingToReport()  ← the ONLY bridge between auditor and tester
+```
+
+**`mapFindingToReport` currently passes to the tester:**
+| Field | Source | Used by tester? |
+|---|---|---|
+| `id` | derived from title | ✅ identifier only |
+| `severity` | `finding.severity` | label only |
+| `type` | `finding.type` | ✅ in analysis prompt |
+| `title` | `finding.title` | ✅ in analysis prompt |
+| `description` | `finding.description` | ✅ in analysis prompt |
+| `affectedContract.sourceCode` | `coderResult.contract` | ✅ shown to LLM |
+| `affectedContract.name` | extracted from path | ✅ |
+| `attackVector` | `exploitablePaths[0]` | ✅ in analysis prompt |
+| `exploitablePaths` | `judgeReview.exploitablePaths` | ✅ passed |
+| `codeSnippet` | `finding.codeSnippet` | ✅ passed |
+| `location` | `finding.location` | ✅ passed |
+
+**What the auditor produces but the tester NEVER receives:**
+| Auditor field | Value | Why it would help the tester |
+|---|---|---|
+| `finding.recommendation` | Human-readable fix suggestion | Tells tester what the PATCH would look like → key for specific assertions |
+| `finding.judgeReview.review` | Judge's analysis of exploitability | More precise attack reasoning than just description |
+| `finding.judgeReview.confidence` | 0-100 confidence score | Tester could skip low-confidence findings |
+| `auditorResult.repoContext` | Full structured protocol context | Gives tester knowledge of cross-contract interactions |
+| `auditorResult.fileTree` | Directory tree of the repo | Helps tester find the right imports |
+| All other `.sol` files | Source of ALL contracts | Tester only gets ONE contract; misses dependencies |
+
+**Missing in production but present in benchmark:**
+| Field | Benchmark | Production |
+|---|---|---|
+| `customSandboxDir` | ✅ real project folder | ❌ NOT SET (uses generic /tmp/poc-sandbox) |
+| `referenceTestCode` | ✅ real test files | ❌ NOT SET |
+| `patchDiff` | ✅ computed from dataset | ❌ N/A (no patch in production) |
+
+**The critical gap:** In production, `customSandboxDir` is null/undefined, so:
+- BFS test file selection → SKIPPED
+- projectContextExtractor → SKIPPED  
+- dependencyStubber → SKIPPED
+- Test file cleanup → SKIPPED
+- The tester runs in the generic `/tmp/poc-sandbox` with NO project context
+
+All the improvements that boosted benchmark from 27% → 54% are benchmark-only.
+
+---
+
+## Model vs Agent Quality Plateau
+
+**How to tell them apart:**
+
+| Symptom | Model limit | Agent limit |
+|---|---|---|
+| Correct assertion but setup wrong | | ✅ Agent can fix |
+| Wrong assertion (generic, too broad) | ✅ Model limit | Could improve with better prompting |
+| Compile errors even with MINIMAL_INTERFACE | | ✅ Agent can fix |
+| Passes vulnerable but also passes patched | ✅ Model semantics | Partially agent (patch context) |
+| Correct overall but random failures across runs | ✅ Temperature/stochastic | |
+
+**Current evidence points:**
+- gemini-3.1-flash-lite is a very small/cheap model → likely hitting model ceiling for complex semantic reasoning
+- The compile errors are 100% agent-fixable (and we mostly did)  
+- Specificity failures: partly agent bug (patch not applied) + partly model (generic assertions)
+
+**Test: try 3 cases with a stronger model to see the ceiling:**
+```bash
+OPENROUTER_MODEL="google/gemini-2.0-flash" BENCHMARK_LIMIT=3 npx tsx src/benchmark/runTesterBenchmark.ts
+```
+If specificity jumps to >50% with the stronger model, it's the model. If not, it's the agent prompting.
+
+---
+
+## Next Actions (Priority Order)
+
+### 1. Fix production gap — `mapFindingToReport` (HIGH VALUE, LOW EFFORT)
+Add the missing rich context from the auditor to what the tester receives:
+
+```typescript
+export function mapFindingToReport(finding: any, sourceCode: string, 
+                                    repoContext?: string): VulnerabilityReport {
+  return {
+    // ... existing fields
+    description: [
+      finding.description,
+      finding.recommendation ? `\nFix recommendation: ${finding.recommendation}` : "",
+      finding.judgeReview?.review ? `\nJudge analysis: ${finding.judgeReview.review}` : "",
+      repoContext ? `\nProtocol context: ${repoContext.slice(0, 1000)}` : "",
+    ].filter(Boolean).join("\n"),
+    // The recommendation tells the tester what should NOT work after the fix
+    // which is the key for writing a specific assertion
+  };
+}
+```
+
+### 2. Pass `repoPath` as `customSandboxDir` in production
+In server.ts, pass `outputDir` (where Contract.sol was written) as `customSandboxDir`:
+```typescript
+const report = mapFindingToReport(auditorResult.findings[0], coderResult.contract, 
+                                   auditorResult.repoContext);
+report.customSandboxDir = outputDir;  // ← enables all context improvements
+```
+Since production uses a single Contract.sol with no remappings or test files, the context
+extractor will find no remappings (graceful fallback), and the dep stubber will run a 
+probe but find nothing missing (also fine).
+
+### 3. Lower MAX_ITERATIONS from 10 to 6
+Credits are limited. 10 iterations is too many for flash-lite which repeats itself after ~5.
+
+### 4. Run full benchmark to measure Run 4
+After the test file cleanup fix + patch fix are confirmed working.
