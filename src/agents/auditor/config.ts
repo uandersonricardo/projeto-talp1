@@ -21,3 +21,4 @@ export const MAX_DEPTH = 6;
 export const MAX_DOC_CHARS = 12_000;
 export const MAX_SOL_CHARS = 40_000;
 export const MAX_REFLECTIONS = 3;
+export const MIN_FILE_IMPORTANCE = 3;

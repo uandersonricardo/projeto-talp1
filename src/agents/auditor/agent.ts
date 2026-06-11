@@ -14,6 +14,7 @@ import {
   MAX_DOC_CHARS,
   MAX_REFLECTIONS,
   MAX_SOL_CHARS,
+  MIN_FILE_IMPORTANCE,
   SKIP_DIRS,
   SOL_EXT,
   SOL_TEST_SUFFIXES,
@@ -95,7 +96,13 @@ const defineScope: GraphNode<typeof AuditorState> = async (state) => {
     `defineScope: rankings:\n${sorted.map((r) => `  [${r.importance}/5] ${r.filePath} — ${r.reasoning}`).join("\n")}`,
   );
 
-  return { scope: solFiles, docs: docFiles, fileTree, fileRankings: sorted };
+  const importantFiles = sorted.filter((r) => r.importance >= MIN_FILE_IMPORTANCE).map((r) => r.filePath);
+  const skipped = solFiles.length - importantFiles.length;
+  if (skipped > 0) {
+    logger.info(`defineScope: skipping ${skipped} low-importance file(s) (importance < ${MIN_FILE_IMPORTANCE})`);
+  }
+
+  return { scope: importantFiles, docs: docFiles, fileTree, fileRankings: sorted };
 };
 
 const gatherContext: GraphNode<typeof AuditorState> = async (state) => {
@@ -135,6 +142,8 @@ const gatherContext: GraphNode<typeof AuditorState> = async (state) => {
     }
   }
 
+  parts.push(`## File Tree\n\n\`\`\`\n${state.fileTree}\n\`\`\``);
+
   parts.push("## Structural Analysis\n");
   for (const { analysis } of solidityEntries) {
     parts.push(analysis);
@@ -143,11 +152,15 @@ const gatherContext: GraphNode<typeof AuditorState> = async (state) => {
   const model = llmHaiku.withStructuredOutput(z.object({ context: z.string() }));
   const result = await model.invoke([new SystemMessage(GATHER_CONTEXT_PROMPT), new HumanMessage(parts.join("\n\n"))]);
 
-  logger.debug(`gatherContext: full context:\n${parts.join("\n\n")}`);
-  logger.info(`gatherContext: context built (${result.context.length} chars)`);
-  logger.debug(`gatherContext: compact context:\n${result.context}`);
+  const fileTreeBlock = `## Árvore de Arquivos\n\n\`\`\`\n${state.fileTree}\n\`\`\``;
+  const structuralBlock = `## Análise Estrutural dos Contratos\n\n${solidityEntries.map(({ analysis }) => analysis).join("\n\n---\n\n")}`;
+  const repoContext = [result.context, fileTreeBlock, structuralBlock].join("\n\n");
 
-  return { repoContext: result.context };
+  logger.debug(`gatherContext: full context:\n${parts.join("\n\n")}`);
+  logger.info(`gatherContext: context built (${repoContext.length} chars)`);
+  logger.debug(`gatherContext: compact context:\n${repoContext}`);
+
+  return { repoContext };
 };
 
 const findVulnerabilities: GraphNode<typeof AuditorState> = async (state) => {
