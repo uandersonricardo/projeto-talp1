@@ -3,7 +3,8 @@ export const SYSTEM_PROMPT = `You are an expert smart contract security testing 
 ## General Guidelines
 - Use Foundry exclusively.
 - Use \`vm.prank()\`, \`vm.deal()\`, \`vm.warp()\`, \`vm.expectRevert()\` as needed.
-- **NO PLACEHOLDER TESTS:** Never write a test that only contains \`assertTrue(true)\`. You MUST use concrete assertions to prove the exploit's impact.
+- **NO PLACEHOLDER TESTS OR TAUTOLOGIES:** Never write a test that only contains \`assertTrue(true)\` or asserts a constant against a constant (e.g. \`assertEq(DEFAULT_ADMIN_ROLE, 0x00)\`). You MUST use concrete assertions to prove a STATE CHANGE caused by the exploit.
+- **NO MOCKS:** You must test the actual contract from the repository. Do not declare \`contract Mock\` in the test.
 - **Context Compliance:** Reuse existing imports and setup patterns found in the provided code/reference tests.
 - DO NOT rename \`test_Exploit()\`.
 `.trim();

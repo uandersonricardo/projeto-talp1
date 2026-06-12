@@ -1,18 +1,30 @@
 {
   "summary": {
-    "timestamp": "2026-06-09T17:52:42.551Z",
-    "total_processed": 14,
-    "reproducibility_rate": 42.857142857142854,
-    "specificity_rate": 16.666666666666664,
-    "overall_ground_truth_rate": 7.142857142857142,
-    "average_iterations": 7.857142857142857
+    "timestamp": "2026-06-11T17:27:55.677Z",
+    "total_processed": 18,
+    "reproducibility_rate": 16.666666666666664,
+    "specificity_rate": 0,
+    "overall_ground_truth_rate": 0,
+    "average_iterations": 9.38888888888889
   },
   "details": [
     {
-      "id": "008",
-      "reproducible": true,
+      "id": "001",
+      "reproducible": false,
       "specific": false,
-      "iterations": 3
+      "iterations": 10
+    },
+    {
+      "id": "003",
+      "reproducible": false,
+      "specific": false,
+      "iterations": 10
+    },
+    {
+      "id": "008",
+      "reproducible": false,
+      "specific": false,
+      "iterations": 10
     },
     {
       "id": "009",
@@ -45,28 +57,10 @@
       "iterations": 10
     },
     {
-      "id": "039",
-      "reproducible": true,
-      "specific": false,
-      "iterations": 8
-    },
-    {
-      "id": "041",
-      "reproducible": true,
-      "specific": false,
-      "iterations": 6
-    },
-    {
       "id": "042",
       "reproducible": false,
       "specific": false,
       "iterations": 10
-    },
-    {
-      "id": "046",
-      "reproducible": true,
-      "specific": false,
-      "iterations": 7
     },
     {
       "id": "048",
@@ -81,7 +75,37 @@
       "iterations": 10
     },
     {
+      "id": "051",
+      "reproducible": false,
+      "specific": false,
+      "iterations": 10
+    },
+    {
+      "id": "058",
+      "reproducible": false,
+      "specific": false,
+      "iterations": 10
+    },
+    {
+      "id": "066",
+      "reproducible": true,
+      "specific": false,
+      "iterations": 7
+    },
+    {
       "id": "070",
+      "reproducible": false,
+      "specific": false,
+      "iterations": 10
+    },
+    {
+      "id": "077",
+      "reproducible": false,
+      "specific": false,
+      "iterations": 10
+    },
+    {
+      "id": "091",
       "reproducible": false,
       "specific": false,
       "iterations": 10
@@ -89,8 +113,8 @@
     {
       "id": "098",
       "reproducible": true,
-      "specific": true,
-      "iterations": 2
+      "specific": false,
+      "iterations": 8
     }
   ]
 }

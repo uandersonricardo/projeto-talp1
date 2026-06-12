@@ -5,13 +5,13 @@ import type { BaseChatModel } from "@langchain/core/language_models/chat_models"
 
 export type LLMProvider = "google" | "openrouter" | "anthropic";
 
-export function createLLM(overrideProvider?: LLMProvider): BaseChatModel {
+export function createLLM(overrideProvider?: LLMProvider, overrideModelName?: string): BaseChatModel {
   const provider = overrideProvider || (process.env.LLM_PROVIDER as LLMProvider) || "openrouter";
 
   switch (provider) {
     case "openrouter":
       return new ChatOpenRouter({
-        model: process.env.OPENROUTER_MODEL || "google/gemini-3.1-flash-lite",
+        model: overrideModelName || process.env.OPENROUTER_MODEL || "google/gemini-3.1-flash-lite",
         temperature: 0.2,
         apiKey: process.env.OPENROUTER_API_KEY,
         maxTokens: 4096,
@@ -20,7 +20,7 @@ export function createLLM(overrideProvider?: LLMProvider): BaseChatModel {
 
     case "anthropic":
       return new ChatAnthropic({
-        model: process.env.ANTHROPIC_MODEL || "claude-sonnet-4-6",
+        model: overrideModelName || process.env.ANTHROPIC_MODEL || "claude-sonnet-4-6",
         temperature: 0.2,
         maxTokens: 4096,
       });
@@ -28,7 +28,7 @@ export function createLLM(overrideProvider?: LLMProvider): BaseChatModel {
     default:
       return new ChatGoogleGenerativeAI({
         apiKey: process.env.GOOGLE_API_KEY || "",
-        model: process.env.MODEL_NAME || "gemini-2.5-flash",
+        model: overrideModelName || process.env.MODEL_NAME || "gemini-2.5-flash",
         temperature: 0.2,
         maxOutputTokens: 4096,
       });

@@ -1,0 +1,103 @@
+ID;Time_Sec;Reproducible;Specific;False_Positive_Rejected;A_Iterations;A_Final_Error;B_Iterations;B_Final_Error;PoC_Code;Patch_Diff
+001;203;TRUE;FALSE;TRUE;9;;10;[REVERT_NO_MESSAGE] Transaction reverted without a message. Common causes: wrong call order, missing role/permission setup, incorrect contract state, or wrong function arguments.
+Key error lines:
+[FAIL: EvmError: Revert] test_Exploit() (gas: 71492)
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; finished in 2.91ms (154.58µs CPU time)
+[FAIL: EvmError: Revert] test_Exploit() (gas: 71492);"// SPDX-License-Identifier: MIT
+pragma solidity 0.8.23;
+
+import {BaseTest} from ""@test/BaseTest.sol"";
+import {Size} from ""@src/Size.sol"";
+import {
+    InitializeFeeConfigParams,
+    InitializeRiskConfigParams,
+    InitializeOracleParams,
+    InitializeDataParams
+} from ""@src/libraries/actions/Initialize.sol"";
+import {Initializable} from ""@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol"";
+import {IAccessControl} from ""@openzeppelin/contracts/access/IAccessControl.sol"";
+
+/**
+ * @title ExploitTest
+ * @notice Proof of Concept for the uninitialized implementation vulnerability.
+ * 
+ * The vulnerability exists if an implementation contract can be initialized by an attacker.
+ * In Size.sol, the constructor calls _disableInitializers(), which is the standard 
+ * OpenZeppelin protection against this specific attack.
+ * 
+ * This test verifies that the protection is active and the implementation cannot be hijacked.
+ */
+contract ExploitTest is BaseTest {
+    address attacker = address(0xBAD);
+    Size sizeImplementation;
+
+    function setUp() public override {
+        super.setUp();
+        // Deploy a fresh implementation contract to test its initialization state
+        sizeImplementation = new Size();
+    }
+
+    /**
+     * @notice This test demonstrates that the implementation contract is protected.
+     * If the implementation were vulnerable, the attacker could call initialize() 
+     * and gain the DEFAULT_ADMIN_ROLE.
+     * 
+     * The test function is named test_Exploit() to satisfy the requirement.
+     */
+    function test_Exploit() public {
+        // 1. Prepare dummy initialization parameters
+        InitializeFeeConfigParams memory f;
+        InitializeRiskConfigParams memory r;
+        InitializeOracleParams memory o;
+        InitializeDataParams memory d;
+
+        vm.startPrank(attacker);
+
+        // 2. Attempt to initialize the implementation contract directly.
+        // Because Size.sol has _disableInitializers() in the constructor, this MUST revert.
+        // We use vm.expectRevert to catch the expected failure.
+        // Initializable.InvalidInitialization is the error thrown when calling initialize on a disabled contract.
+        vm.expectRevert(Initializable.InvalidInitialization.selector);
+        sizeImplementation.initialize(
+            attacker, 
+            f,
+            r,
+            o,
+            d
+        );
+
+        vm.stopPrank();
+
+        // 3. Assertions to prove the attacker failed to gain control
+        bytes32 adminRole = sizeImplementation.DEFAULT_ADMIN_ROLE();
+        bool hasRole = IAccessControl(address(sizeImplementation)).hasRole(adminRole, attacker);
+        
+        // The assertion that proves the contract is secure: attacker does NOT have the admin role
+        assertEq(hasRole, false, ""Attacker should not be able to initialize the implementation"");
+    }
+
+    /**
+     * @notice Verifies that the implementation contract is indeed in an initialized state 
+     * (version 255) due to _disableInitializers(), preventing further initialization.
+     */
+    function test_Implementation_Is_Disabled() public {
+        // Prepare dummy initialization parameters
+        InitializeFeeConfigParams memory f;
+        InitializeRiskConfigParams memory r;
+        InitializeOracleParams memory o;
+        InitializeDataParams memory d;
+
+        // Any caller (including the deployer) should be unable to initialize the logic contract
+        vm.expectRevert(Initializable.InvalidInitialization.selector);
+        sizeImplementation.initialize(
+            address(this), 
+            f,
+            r,
+            o,
+            d
+        );
+        
+        // Verify the implementation address is not the same as the proxy address used in BaseTest
+        assertNotEq(address(sizeImplementation), address(size));
+    }
+}";

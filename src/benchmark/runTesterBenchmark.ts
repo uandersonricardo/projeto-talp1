@@ -2,6 +2,7 @@ import fs from "fs/promises";
 import path from "path";
 import { exec } from "child_process";
 import { promisify } from "util";
+import { fileURLToPath } from 'url';
 import { runPoCGenerator } from "../agents/tester/index.js";
 import { VulnerabilityReport } from "../agents/tester/types.js";
 import "dotenv/config";
@@ -17,7 +18,12 @@ const SUMMARY_FILE = "data/benchmark_summary.json";
  * This handles nested patch structures like patches/003/2023-07-pooltogether/vault/src/Vault.sol
  * when tempPatchDir expects src/Vault.sol.
  */
-async function applyPatchSmart(patchSourceDir: string, tempPatchDir: string): Promise<void> {
+export async function applyPatchSmart(caseId: string, sandboxDir: string): Promise<boolean> {
+  const metadataContent = await fs.readFile(METADATA_FILE, "utf-8");
+  const metadata = JSON.parse(metadataContent);
+  const finding = metadata[caseId];
+  const patchSourceDir = path.join(process.cwd(), DATASET_PATH, finding.patch);
+  
   let stdout = "";
   try {
     ({ stdout } = await execAsync(
@@ -25,7 +31,7 @@ async function applyPatchSmart(patchSourceDir: string, tempPatchDir: string): Pr
       { timeout: 15_000 }
     ));
   } catch {
-    return;
+    return false;
   }
   const patchFiles = stdout.trim().split("\n").filter(Boolean);
   let applied = 0;
@@ -38,7 +44,7 @@ async function applyPatchSmart(patchSourceDir: string, tempPatchDir: string): Pr
     let matched = false;
     for (let strip = 1; strip <= 3 && strip < parts.length; strip++) {
       const stripped = parts.slice(strip).join("/");
-      const targetPath = path.join(tempPatchDir, stripped);
+      const targetPath = path.join(sandboxDir, stripped);
       const exists = await fs.access(targetPath).then(() => true).catch(() => false);
       if (exists) {
         await execAsync(`cp "${patchFile}" "${targetPath}"`);
@@ -53,6 +59,7 @@ async function applyPatchSmart(patchSourceDir: string, tempPatchDir: string): Pr
     }
   }
   console.log(`  [patch] Applied ${applied}/${patchFiles.length} patch files.`);
+  return applied > 0;
 }
 
 /**
@@ -120,6 +127,14 @@ function extractVulnerableFilePath(text: string): string | null {
 /**
  * Recursively finds a file by name within a directory, prioritizing src/
  */
+export async function setupSandbox(caseId: string, data: any): Promise<string> {
+    const targetDir = path.join(process.cwd(), DATASET_PATH, data.target_directory);
+    const tempDir = path.join(process.cwd(), "temp_vuln_run", caseId);
+    await execAsync(`mkdir -p temp_vuln_run && rm -rf ${tempDir} && cp -r ${targetDir} ${tempDir}`);
+    await execAsync(`rm -f ${tempDir}/.git`);
+    return tempDir;
+}
+
 async function findFileRecursively(dir: string, fileName: string): Promise<string | null> {
   const entries = await fs.readdir(dir, { withFileTypes: true });
   const subdirs: string[] = [];
@@ -308,7 +323,7 @@ async function main() {
             
             const patchSourceDir = path.join(process.cwd(), DATASET_PATH, finding.patch);
             // Smart patch: match each patched .sol to the right file in tempPatchDir
-            await applyPatchSmart(patchSourceDir, tempPatchDir);
+            await applyPatchSmart(id, tempPatchDir);
 
             const { runFoundry } = await import("../agents/tester/tools/foundryRunner.js");
             const patchExec = await runFoundry(resultVuln.solidityCode, tempPatchDir);
@@ -403,4 +418,7 @@ async function main() {
   console.log(`Summary saved to ${SUMMARY_FILE}`);
 }
 
-main().catch(console.error);
+const __filename = fileURLToPath(import.meta.url);
+if (process.argv[1] === __filename) {
+  main().catch(console.error);
+}

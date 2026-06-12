@@ -1,6 +1,7 @@
 import "dotenv/config";
 import fs from "fs/promises";
 import path from "path";
+import { execSync } from "child_process";
 
 import { StateGraph, END, START } from "@langchain/langgraph";
 import { PoCStateAnnotation, PoCState } from "./state.js";
@@ -23,9 +24,11 @@ import { createMissingDependencyStubs } from "./utils/dependencyStubber.js";
 import { analyzeSolidityFile } from "../auditor/tools/solidity-analyzer-tool.js";
 import { extractConstructor } from "./utils/parserUtils.js";
 
-const MAX_ITERATIONS = 6;
+const MAX_ITERATIONS = 10;
 
-const llm = createLLM();
+// LLM Routing: Smart model for strategy/logic, Fast model for syntax/compilation
+const smartLlm = createLLM(undefined, "google/gemini-3-flash-preview");
+const fastLlm = createLLM(undefined, "google/gemini-3.1-flash-lite");
 
 async function oracleNode(state: PoCState): Promise<Partial<PoCState>> {
   console.log("[oracleNode] gerando scaffold para:", state.report.title);
@@ -137,7 +140,8 @@ ${state.report.patchDiff}
 \`\`\`` : ""}
 `;
 
-  const response = await llm.invoke([
+  console.log("[testerAgent] analyzeVulnerabilityNode: analyzing bug using SMART model...");
+  const response = await smartLlm.invoke([
     { role: "system", content: ANALYZE_VULNERABILITY_PROMPT },
     { role: "user", content: userMessage },
   ]);
@@ -230,7 +234,25 @@ ${oracleContext!.projectTestImports}
 Fix the code. Return the entire file.`;
   }
 
-  console.log(`[testerAgent] generatePoCNode iteração ${iterations + 1}, isRetry=${isRetry}, compileFailures=${state.compileFailures}, mode=${isRetry ? (lastError?.includes("COMPILER_ERROR") || lastError?.includes("INVALID_CODE") ? (state.compileFailures >= 3 ? "MINIMAL_INTERFACE" : "FIX_COMPILE") : "FIX_LOGIC") : "INITIAL"}`);
+  // Route to the appropriate LLM based on task complexity
+  let activeLlm = smartLlm;
+  let modelDesc = "SMART";
+  
+  const mode = isRetry ? (lastError?.includes("COMPILER_ERROR") || lastError?.includes("INVALID_CODE") ? (state.compileFailures >= 3 ? "MINIMAL_INTERFACE" : "FIX_COMPILE") : "FIX_LOGIC") : "INITIAL";
+  
+  if (mode === "FIX_COMPILE" || mode === "MINIMAL_INTERFACE") {
+    activeLlm = fastLlm;
+    modelDesc = "FAST";
+  }
+  
+  // INVALID_CODE (Structural/Hardening constraints) require complex reasoning.
+  // The FAST model usually ignores them and loops. Send to SMART model.
+  if (lastError?.includes("INVALID_CODE")) {
+    activeLlm = smartLlm;
+    modelDesc = "SMART_RECOVERY";
+  }
+
+  console.log(`[testerAgent] generatePoCNode iteração ${iterations + 1}, isRetry=${isRetry}, compileFailures=${state.compileFailures}, mode=${mode}, llm=${modelDesc}`);
 
   // DEBUG: Output context before sending to LLM
   if (process.env.DEBUG_CONTEXT === "true") {
@@ -241,7 +263,7 @@ Fix the code. Return the entire file.`;
   }
 
   try {
-    const response = await llm.invoke([
+    const response = await activeLlm.invoke([
       { role: "system", content: currentSystemPrompt },
       { role: "user", content: userMessage },
     ]);
@@ -277,9 +299,25 @@ async function runFoundryNode(state: PoCState): Promise<Partial<PoCState>> {
     trimmedCode.includes("assert(1 == 1")
   ) && !hasStrongAssertion;
 
-  if (isMissingCode || isMissingContract || isMissingTest || isPlaceholder || isLazyTest) {
+  const isUsingMock = trimmedCode.includes("contract Mock") || trimmedCode.includes("contract Fake");
+  const isUsingTryCatch = trimmedCode.includes("try ") && trimmedCode.includes("catch ");
+
+  // Anti-Cheat: Prevent redefining the vulnerable contract inside the test file
+  // We only block redefining the EXACT target contract. Legitimate helper/attacker contracts are allowed.
+  const targetContractRegex = new RegExp(`contract\\s+${state.report.affectedContract.name}\\b`);
+  const hasFakeContracts = targetContractRegex.test(trimmedCode);
+
+  if (isMissingCode || isMissingContract || isMissingTest || isPlaceholder || isLazyTest || isUsingMock || isUsingTryCatch || hasFakeContracts || !hasStrongAssertion) {
     const summary = (isMissingCode
       ? "[INVALID_CODE] No Solidity code returned. The LLM must output a complete solidity code block."
+      : isUsingMock
+        ? "[INVALID_CODE] You created a Mock contract in the test file. This is STRICTLY FORBIDDEN. You MUST import and exploit the real vulnerable contract from the repository."
+      : isUsingTryCatch
+        ? "[INVALID_CODE] You used a try-catch block in the test. This is STRICTLY FORBIDDEN. If the exploit fails, the test must revert normally. Do not swallow errors."
+      : hasFakeContracts
+        ? `[INVALID_CODE] You redefined 'contract ${state.report.affectedContract.name}' inside the test file. This is STRICTLY FORBIDDEN. You MUST interact with the real vulnerable contract via 'interface' or 'import'. Do not redefine the vulnerable contract inside the test.`
+      : !hasStrongAssertion
+        ? "[INVALID_CODE] Your test has NO valid assertions (or they are commented out). You MUST include a meaningful assertion like assertGt(attacker.balance, initialBalance) or assertEq(owner, attacker)."
       : isMissingContract
         ? "[INVALID_CODE] No 'contract ExploitTest' found. The test contract MUST be named ExploitTest."
         : isMissingTest
@@ -322,6 +360,28 @@ async function runFoundryNode(state: PoCState): Promise<Partial<PoCState>> {
       ? `\nKey error lines:\n${analysis.relevantLines.slice(0, 15).join("\n")}`
       : "";
     lastErrorMsg = `${analysis.summary}${relevantLinesText}`;
+
+    // Auto-resolve missing files
+    if (lastErrorMsg.includes("File not found")) {
+      const match = lastErrorMsg.match(/Source "([^"]+)" not found/);
+      if (match) {
+        const missingFile = match[1];
+        const missingBasename = path.basename(missingFile);
+        try {
+          if (state.report.customSandboxDir) {
+            const findCmd = `find ${state.report.customSandboxDir} -name "${missingBasename}"`;
+            const findOutput = execSync(findCmd, { encoding: "utf8" }).trim().split("\n").filter(Boolean);
+            if (findOutput.length > 0) {
+              const correctPath = path.relative(state.report.customSandboxDir, findOutput[0]);
+              lastErrorMsg += `\n\n[TOOL: AUTO-RESOLVE] I found the missing file! The correct import path to use is: "${correctPath}"`;
+              console.log(`[testerAgent] Auto-resolved missing file: ${missingBasename} -> ${correctPath}`);
+            }
+          }
+        } catch (e) {
+          // Ignore find errors
+        }
+      }
+    }
   }
 
   const isCompileError = analysis.category === "compiler_error";
