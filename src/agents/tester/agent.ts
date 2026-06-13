@@ -23,13 +23,17 @@ import { extractProjectContext } from "./utils/projectContextExtractor.js";
 import { createMissingDependencyStubs } from "./utils/dependencyStubber.js";
 import { analyzeSolidityFile } from "../auditor/tools/solidity-analyzer-tool.js";
 import { extractConstructor } from "./utils/parserUtils.js";
+import { generateInfrastructureNode, generateExploitNode } from "./nodes.js";
+import { oracleNode } from "./nodes/oracle.js";
+import { analyzeVulnerabilityNode } from "./nodes/analyzeVulnerability.js";
+import { generateInfrastructureNode, generateExploitNode } from "./nodes.js";
 
-const MAX_ITERATIONS = 10;
+const MAX_INFRA_ITERATIONS = 30;
+const MAX_EXPLOIT_ITERATIONS = 30;
 
 // LLM Routing: Smart model for strategy/logic, Fast model for syntax/compilation
 const smartLlm = createLLM(undefined, "google/gemini-3-flash-preview");
 const fastLlm = createLLM(undefined, "google/gemini-3.1-flash-lite");
-
 async function oracleNode(state: PoCState): Promise<Partial<PoCState>> {
   console.log("[oracleNode] gerando scaffold para:", state.report.title);
 
@@ -149,132 +153,8 @@ ${state.report.patchDiff}
   return { vulnerabilityAnalysis: response.content as string };
 }
 
-/**
- * Multi-Pass Node 2 - Code Generation (Initial & Fixes)
- */
-async function generatePoCNode(state: PoCState): Promise<Partial<PoCState>> {
-  const { report, oracleContext, executionLogs, pocCode, iterations, lastError, vulnerabilityAnalysis } = state;
-  const isRetry = iterations > 0;
 
-  let currentSystemPrompt = SYSTEM_PROMPT;
-  let userMessage = "";
 
-  if (!isRetry) {
-    // PASS 2: INITIAL GENERATION
-    currentSystemPrompt = POC_INITIAL_PROMPT;
-    userMessage = `Vulnerability Analysis Plan:
-${vulnerabilityAnalysis}
-
-### Contract Source:
-\`\`\`solidity
-${report.affectedContract.sourceCode}
-\`\`\`
-
-### API Reference:
-${oracleContext!.targetContractAPI}
-
-${oracleContext!.referenceTestHelpers ? `### Test Helpers:
-${oracleContext!.referenceTestHelpers}` : ""}
-
-${oracleContext!.projectRemappings ? `### Project Remappings (use these for import paths):
-\`\`\`
-${oracleContext!.projectRemappings}
-\`\`\`` : ""}
-
-${oracleContext!.projectTestImports ? `### Import Pattern from Existing Test (${oracleContext!.projectTestFilePath}):
-\`\`\`solidity
-${oracleContext!.projectTestImports}
-\`\`\`` : ""}
-
-### Scaffold:
-\`\`\`solidity
-${oracleContext!.solidityScaffold}
-\`\`\`
-`;
-  } else {
-    // PASS 3+: FIXING ERRORS (BRANCHING)
-    const isCompilerError = lastError?.includes("[COMPILER_ERROR]") || lastError?.includes("[INVALID_CODE]");
-    const useMinimalStrategy = state.compileFailures >= 3;
-    
-    if (useMinimalStrategy && isCompilerError) {
-      // ESCAPE HATCH: After 3 compile failures, switch to zero-import minimal interface strategy
-      currentSystemPrompt = POC_MINIMAL_INTERFACE_PROMPT;
-      console.log("[testerAgent] Switching to MINIMAL_INTERFACE strategy after", state.compileFailures, "compile failures");
-    } else {
-      currentSystemPrompt = isCompilerError ? POC_COMPILE_FIX_PROMPT : POC_TEST_FIX_PROMPT;
-    }
-
-    userMessage = `The previous PoC failed.
-    
-Error Category: ${isCompilerError ? "Compilation Failure" : "Execution/Logic Failure"}
-Error Details:
-${lastError ?? ""}
-
-Forge Output (last attempt):
-${executionLogs[executionLogs.length - 1]?.slice(0, 3500) ?? "sem logs"}
-
-Previous Code:
-\`\`\`solidity
-${pocCode}
-\`\`\`
-
-Analysis of the bug:
-${vulnerabilityAnalysis}
-
-${!useMinimalStrategy && oracleContext!.projectRemappings ? `Project Remappings (use these for import paths):
-\`\`\`
-${oracleContext!.projectRemappings}
-\`\`\`` : ""}
-
-${!useMinimalStrategy && oracleContext!.projectTestImports ? `Import Pattern from Existing Test (${oracleContext!.projectTestFilePath}):
-\`\`\`solidity
-${oracleContext!.projectTestImports}
-\`\`\`` : ""}
-
-Fix the code. Return the entire file.`;
-  }
-
-  // Route to the appropriate LLM based on task complexity
-  let activeLlm = smartLlm;
-  let modelDesc = "SMART";
-  
-  const mode = isRetry ? (lastError?.includes("COMPILER_ERROR") || lastError?.includes("INVALID_CODE") ? (state.compileFailures >= 3 ? "MINIMAL_INTERFACE" : "FIX_COMPILE") : "FIX_LOGIC") : "INITIAL";
-  
-  if (mode === "FIX_COMPILE" || mode === "MINIMAL_INTERFACE") {
-    activeLlm = fastLlm;
-    modelDesc = "FAST";
-  }
-  
-  // INVALID_CODE (Structural/Hardening constraints) require complex reasoning.
-  // The FAST model usually ignores them and loops. Send to SMART model.
-  if (lastError?.includes("INVALID_CODE")) {
-    activeLlm = smartLlm;
-    modelDesc = "SMART_RECOVERY";
-  }
-
-  console.log(`[testerAgent] generatePoCNode iteração ${iterations + 1}, isRetry=${isRetry}, compileFailures=${state.compileFailures}, mode=${mode}, llm=${modelDesc}`);
-
-  // DEBUG: Output context before sending to LLM
-  if (process.env.DEBUG_CONTEXT === "true") {
-    console.log("\n" + "=".repeat(20) + " LLM CONTEXT START " + "=".repeat(20));
-    console.log("System Prompt:", currentSystemPrompt);
-    console.log("User Message:", userMessage);
-    console.log("=".repeat(20) + " LLM CONTEXT END " + "=".repeat(20) + "\n");
-  }
-
-  try {
-    const response = await activeLlm.invoke([
-      { role: "system", content: currentSystemPrompt },
-      { role: "user", content: userMessage },
-    ]);
-    const solidityCode = extractSolidity(response.content as string);
-    console.log("[testerAgent] Solidity extraído, tamanho:", solidityCode.length);
-    return { pocCode: solidityCode, iterations: 1 };
-  } catch (err) {
-    console.error("[testerAgent] falha na geração:", (err as Error).message);
-    return { iterations: 1, lastError: `Erro na geração/extração: ${(err as Error).message}` };
-  }
-}
 
 async function runFoundryNode(state: PoCState): Promise<Partial<PoCState>> {
   console.log("[testerAgent] Executando runFoundryNode...");
@@ -284,6 +164,10 @@ async function runFoundryNode(state: PoCState): Promise<Partial<PoCState>> {
   const isMissingContract = !trimmedCode.includes("contract ExploitTest");
   const isMissingTest = !trimmedCode.includes("function test_Exploit()");
   const isPlaceholder = trimmedCode.includes("TODO: implementar exploit");
+  const isTargetNotDeployed = trimmedCode.includes("// target = new") || 
+                              trimmedCode.includes("//Target target = new") || 
+                              trimmedCode.includes("// target = address(new") ||
+                              trimmedCode.match(/\/\/\s*([a-zA-Z0-9_]+)\s*=\s*(address\()?new\s+[a-zA-Z0-9_]+/);
   const hasStrongAssertion = (
     trimmedCode.includes("assertEq") || 
     trimmedCode.includes("assertGt") ||
@@ -307,16 +191,26 @@ async function runFoundryNode(state: PoCState): Promise<Partial<PoCState>> {
   const targetContractRegex = new RegExp(`contract\\s+${state.report.affectedContract.name}\\b`);
   const hasFakeContracts = targetContractRegex.test(trimmedCode);
 
-  if (isMissingCode || isMissingContract || isMissingTest || isPlaceholder || isLazyTest || isUsingMock || isUsingTryCatch || hasFakeContracts || !hasStrongAssertion) {
+  const hasIllegalComments = trimmedCode.split('\n').some(line => {
+    const isComment = line.includes('//') || line.includes('/*');
+    const isAllowed = line.includes('SPDX-License-Identifier') || line.includes('INJECT_HACK');
+    return isComment && !isAllowed;
+  });
+
+  if (isMissingCode || isMissingContract || isUsingMock || isUsingTryCatch || hasFakeContracts || isTargetNotDeployed || hasIllegalComments || (!state.infrastructurePhase && (isMissingTest || isPlaceholder || isLazyTest || !hasStrongAssertion))) {
     const summary = (isMissingCode
       ? "[INVALID_CODE] No Solidity code returned. The LLM must output a complete solidity code block."
+      : isTargetNotDeployed
+        ? "[INVALID_CODE] You left the target contract instantiation commented out. You MUST instantiate the real target contract in setUp() (e.g. `target = new Target()`). Exploiting address(0) is a cheat and will fail."
+      : hasIllegalComments
+        ? "[INVALID_CODE] You added a comment in the code. This is STRICTLY FORBIDDEN. You must write the actual code instead of comments. Do NOT use '//' or '/*' (except for SPDX and INJECT_HACK)."
       : isUsingMock
         ? "[INVALID_CODE] You created a Mock contract in the test file. This is STRICTLY FORBIDDEN. You MUST import and exploit the real vulnerable contract from the repository."
       : isUsingTryCatch
         ? "[INVALID_CODE] You used a try-catch block in the test. This is STRICTLY FORBIDDEN. If the exploit fails, the test must revert normally. Do not swallow errors."
       : hasFakeContracts
         ? `[INVALID_CODE] You redefined 'contract ${state.report.affectedContract.name}' inside the test file. This is STRICTLY FORBIDDEN. You MUST interact with the real vulnerable contract via 'interface' or 'import'. Do not redefine the vulnerable contract inside the test.`
-      : !hasStrongAssertion
+      : (!state.infrastructurePhase && !hasStrongAssertion)
         ? "[INVALID_CODE] Your test has NO valid assertions (or they are commented out). You MUST include a meaningful assertion like assertGt(attacker.balance, initialBalance) or assertEq(owner, attacker)."
       : isMissingContract
         ? "[INVALID_CODE] No 'contract ExploitTest' found. The test contract MUST be named ExploitTest."
@@ -326,7 +220,10 @@ async function runFoundryNode(state: PoCState): Promise<Partial<PoCState>> {
             ? "[INVALID_CODE] Exploit has TODO placeholder. You must implement the actual exploit logic."
             : "[WEAK_ASSERTION] Only assertTrue(true) found — this never proves the vulnerability. Add a meaningful assertion like assertGt(attacker.balance, initialBalance) or assertEq(owner, attacker)."
     );
-    const status = state.iterations >= MAX_ITERATIONS ? "failed" : "running";
+    const isLastAttempt = state.infrastructurePhase 
+      ? state.infraIterations >= MAX_INFRA_ITERATIONS 
+      : state.exploitIterations >= MAX_EXPLOIT_ITERATIONS;
+    const status = isLastAttempt ? "failed" : "running";
     return {
       executionLogs: [summary],
       lastError: summary,
@@ -338,15 +235,16 @@ async function runFoundryNode(state: PoCState): Promise<Partial<PoCState>> {
   const analysis = analyzeFoundryLog(result);
   const noTestsFound = result.combined.includes("No tests found");
   const passed   = result.exitCode === 0 && result.stdout.includes("ok") && !noTestsFound;
-  const isLastAttempt = state.iterations >= MAX_ITERATIONS;
+  const isLastAttempt = state.infrastructurePhase 
+    ? state.infraIterations >= MAX_INFRA_ITERATIONS 
+    : state.exploitIterations >= MAX_EXPLOIT_ITERATIONS;
 
-  const status = passed
-    ? "success"
-    : result.timedOut
-      ? "timeout"
-      : isLastAttempt
-        ? "failed"
-        : "running";
+  let status: "running" | "success" | "failed" | "timeout" = "running";
+  if (state.infrastructurePhase) {
+    status = result.timedOut ? "timeout" : isLastAttempt && !passed ? "failed" : "running";
+  } else {
+    status = passed ? "success" : result.timedOut ? "timeout" : isLastAttempt ? "failed" : "running";
+  }
 
   console.log(`[testerAgent] Resultado Foundry: exitCode=${result.exitCode}, passed=${passed}`);
   if (!passed) {
@@ -401,27 +299,59 @@ async function reflectNode(state: PoCState): Promise<Partial<PoCState>> {
   return {};
 }
 
-function routeAfterFoundry(state: PoCState): "reflectNode" | typeof END {
-  if (state.status === "success") return END;
-  if (state.status === "timeout") return END;
-  if (state.iterations >= MAX_ITERATIONS) return END;
-  return "reflectNode";
+function routeAfterFoundry(state: PoCState): "reflectNode" | "generateExploitNode" | typeof END {
+  const isLastAttempt = state.infrastructurePhase 
+    ? state.infraIterations >= MAX_INFRA_ITERATIONS 
+    : state.exploitIterations >= MAX_EXPLOIT_ITERATIONS;
+
+  if (state.status === "timeout" || (isLastAttempt && state.status === "failed")) {
+    return END;
+  }
+  
+  if (!state.infrastructurePhase && state.status === "success") {
+    return END;
+  }
+  
+  const isCompileError = state.lastError?.includes("[COMPILER_ERROR]") || state.lastError?.includes("[INVALID_CODE]");
+  
+  if (state.infrastructurePhase) {
+    // We are in the Infra Loop
+    if (isCompileError) {
+      return "reflectNode"; // Go back to infra fix
+    } else {
+      // Compiled successfully! Move to Exploit Loop
+      return "generateExploitNode";
+    }
+  } else {
+    // We are in the Exploit Loop
+    return "reflectNode"; // Go back to exploit fix
+  }
+}
+
+function routeReflection(state: PoCState): "generateInfrastructureNode" | "generateExploitNode" {
+  return state.infrastructurePhase ? "generateInfrastructureNode" : "generateExploitNode";
 }
 
 const graph = new StateGraph(PoCStateAnnotation)
   .addNode("oracleNode", oracleNode)
   .addNode("analyzeVulnerabilityNode", analyzeVulnerabilityNode)
-  .addNode("generatePoCNode", generatePoCNode)
+  .addNode("generateInfrastructureNode", generateInfrastructureNode)
+  .addNode("generateExploitNode", generateExploitNode)
   .addNode("runFoundryNode", runFoundryNode)
   .addNode("reflectNode", reflectNode)
   .addEdge(START, "oracleNode")
   .addEdge("oracleNode", "analyzeVulnerabilityNode")
-  .addEdge("analyzeVulnerabilityNode", "generatePoCNode")
-  .addEdge("generatePoCNode", "runFoundryNode")
+  .addEdge("analyzeVulnerabilityNode", "generateInfrastructureNode")
+  .addEdge("generateInfrastructureNode", "runFoundryNode")
+  .addEdge("generateExploitNode", "runFoundryNode")
   .addConditionalEdges("runFoundryNode", routeAfterFoundry, {
     reflectNode: "reflectNode",
+    generateExploitNode: "generateExploitNode",
     [END]: END,
   })
-  .addEdge("reflectNode", "generatePoCNode");
+  .addConditionalEdges("reflectNode", routeReflection, {
+    generateInfrastructureNode: "generateInfrastructureNode",
+    generateExploitNode: "generateExploitNode"
+  });
 
 export const testerAgent = graph.compile();

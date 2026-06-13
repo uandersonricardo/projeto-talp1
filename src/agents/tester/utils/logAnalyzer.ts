@@ -21,25 +21,31 @@ export interface LogAnalysis {
 function extractCompilerErrors(combined: string): string[] {
   const lines = combined.split("\n");
   const errorLines: string[] = [];
+  let inErrorBlock = false;
   
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    // Match actual error lines with file location arrows
-    if (line.includes("Error") || line.includes("error[") || line.includes("--> ")) {
-      errorLines.push(line);
-      // Include next line (context after the arrow) if it exists
-      if (lines[i + 1] && (lines[i + 1].includes("|") || lines[i + 1].includes("^"))) {
-        errorLines.push(lines[i + 1]);
-        if (lines[i + 2] && lines[i + 2].includes("|")) {
-          errorLines.push(lines[i + 2]);
-        }
-      }
+    // Start of an error block
+    if (line.trim().startsWith("Error") || line.trim().startsWith("error[")) {
+      inErrorBlock = true;
+    } 
+    // Start of a warning block
+    else if (line.trim().startsWith("Warning") || line.trim().startsWith("warning[")) {
+      inErrorBlock = false;
     }
-    if (errorLines.length >= 30) break;
+    // End of compilation output
+    else if (line.includes("Compilation failed")) {
+      inErrorBlock = false;
+    }
+
+    if (inErrorBlock && line.trim() !== "") {
+      errorLines.push(line);
+    }
+    
+    if (errorLines.length >= 40) break;
   }
   
-  // Filter out Warning-only lines
-  return errorLines.filter(l => !l.trim().startsWith("Warning"));
+  return errorLines;
 }
 
 export function analyzeFoundryLog(result: FoundryResult): LogAnalysis {

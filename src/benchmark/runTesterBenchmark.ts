@@ -66,7 +66,7 @@ export async function applyPatchSmart(caseId: string, sandboxDir: string): Promi
  * Computes a unified diff of the main contract between vulnerable and patched versions.
  * Uses the same strip-depth matching as applyPatchSmart.
  */
-async function computePatchDiff(
+export async function computePatchDiff(
   patchSourceDir: string,
   mainContractPath: string,
   targetDir: string,

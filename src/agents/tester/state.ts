@@ -11,7 +11,22 @@ export const PoCStateAnnotation = Annotation.Root({
 
   pocCode: Annotation<string>({
     default: () => "",
-    reducer: (_, y) => y,           // overwrite — always latest version
+    reducer: (_, y) => y,           // overwrite — full combined file
+  }),
+
+  templateCode: Annotation<string>({
+    default: () => "",
+    reducer: (_, y) => y,           // overwrite — only imports and setUp
+  }),
+
+  exploitBody: Annotation<string>({
+    default: () => "",
+    reducer: (_, y) => y,           // overwrite — only the hack logic
+  }),
+
+  infrastructurePhase: Annotation<boolean>({
+    default: () => true,
+    reducer: (_, y) => y,           // overwrite — true while fixing imports
   }),
 
   vulnerabilityAnalysis: Annotation<string>({
@@ -32,6 +47,16 @@ export const PoCStateAnnotation = Annotation.Root({
   iterations: Annotation<number>({
     default: () => 0,
     reducer: (x, y) => x + y,       // additive — incremented by +1 per call
+  }),
+
+  infraIterations: Annotation<number>({
+    default: () => 0,
+    reducer: (x, y) => x + y,       // additive
+  }),
+
+  exploitIterations: Annotation<number>({
+    default: () => 0,
+    reducer: (x, y) => x + y,       // additive
   }),
 
   compileFailures: Annotation<number>({

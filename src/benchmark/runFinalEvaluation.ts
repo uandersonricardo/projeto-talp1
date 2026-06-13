@@ -4,7 +4,7 @@ import path from "path";
 import { execSync } from "child_process";
 import { testerAgent } from "../agents/tester/agent.js";
 import { VulnerabilityReport, PoCResult } from "../agents/tester/types.js";
-import { setupSandbox, applyPatchSmart } from "./runTesterBenchmark.js";
+import { setupSandbox, applyPatchSmart, computePatchDiff } from "./runTesterBenchmark.js";
 
 const DATASET_PATH = path.join(process.cwd(), "Proof-of-Patch-only-dataset");
 const TEMP_DIR = path.join(process.cwd(), "temp_eval_run");
@@ -15,8 +15,8 @@ async function runEvaluation() {
   const metadata = JSON.parse(metadataStr);
   const cases = Object.keys(metadata);
   
-  // Limita para 1 caso para economizar créditos
-  const targetCases = cases.slice(0, 1);
+  // Limitado a 1 projeto (054 - Cally) para observação empírica de simplicidade
+  const targetCases = ["054"];
   console.log(`Iniciando avaliação final para ${targetCases.length} projetos...`);
 
   // Prepara o arquivo CSV
@@ -26,9 +26,11 @@ async function runEvaluation() {
     "Reproducible",
     "Specific",
     "False_Positive_Rejected",
-    "A_Iterations",
+    "A_Infra_Iters",
+    "A_Exploit_Iters",
     "A_Final_Error",
-    "B_Iterations",
+    "B_Infra_Iters",
+    "B_Exploit_Iters",
     "B_Final_Error",
     "PoC_Code",
     "Patch_Diff"
@@ -76,7 +78,12 @@ async function runEvaluation() {
       }
     } catch(e) {}
 
-    const patchDiff = await fs.readFile(path.join(DATASET_PATH, "patches", `${caseId}.patch`), "utf8").catch(() => "");
+    let patchDiff = "";
+    try {
+      const patchSourceDir = path.join(process.cwd(), DATASET_PATH, data.patch);
+      const targetDir = path.join(process.cwd(), DATASET_PATH, data.target_directory);
+      patchDiff = await computePatchDiff(patchSourceDir, path.join(sandboxDir, targetPath), targetDir, targetPath);
+    } catch {}
 
     const reportA: VulnerabilityReport = {
       id: caseId,
@@ -84,7 +91,7 @@ async function runEvaluation() {
       type: data.expected_vulnerability,
       title: `${data.repo_name} - ${caseId}`,
       description: data.annotation,
-      affectedContract: { name: "Target", sourceCode: vulnerableCode, sourceFilePath: targetPath },
+      affectedContract: { name: targetPath.split("/").pop()!.replace(".sol", ""), sourceCode: vulnerableCode, sourceFilePath: targetPath },
       attackVector: data.expected_vulnerability,
       customSandboxDir: sandboxDir,
       referenceTestCode,
@@ -148,7 +155,7 @@ async function runEvaluation() {
         // Passa a MESMA anotação (mentindo que é vulnerável)
         const reportB: VulnerabilityReport = {
           ...reportA,
-          affectedContract: { name: "Target", sourceCode: patchedCode, sourceFilePath: data.main_contract },
+          affectedContract: { name: targetPath.split("/").pop()!.replace(".sol", ""), sourceCode: patchedCode, sourceFilePath: targetPath },
           patchDiff: undefined // Oculta o patch diff do LLM para este cenário
         };
 
@@ -174,9 +181,11 @@ async function runEvaluation() {
       reproducible ? "TRUE" : "FALSE",
       specific ? "TRUE" : "FALSE",
       falsePositiveRejected ? "TRUE" : "FALSE",
-      resultA.iterations.toString(),
+      (resultA as any).infraIterations || 0,
+      (resultA as any).exploitIterations || 0,
       lastErrorA,
-      resultB.iterations?.toString() || "0",
+      (resultB as any).infraIterations || 0,
+      (resultB as any).exploitIterations || 0,
       lastErrorB,
       reproducible ? escapeCsv(pocCodeStr) : "",
       reproducible ? escapeCsv(patchDiff) : ""
