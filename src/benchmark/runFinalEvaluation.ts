@@ -15,8 +15,11 @@ async function runEvaluation() {
   const metadata = JSON.parse(metadataStr);
   const cases = Object.keys(metadata);
   
-  // Limitado a 1 projeto (054 - Cally) para observação empírica de simplicidade
-  const targetCases = ["054"];
+  // Configurações Globais
+  const MAX_CASES = 1;
+  const TIMEOUT_MS = 3 * 60 * 1000; // 3 minutos por caso
+  
+  const targetCases = cases.slice(0, MAX_CASES);
   console.log(`Iniciando avaliação final para ${targetCases.length} projetos...`);
 
   // Prepara o arquivo CSV
@@ -33,7 +36,9 @@ async function runEvaluation() {
     "B_Exploit_Iters",
     "B_Final_Error",
     "PoC_Code",
-    "Patch_Diff"
+    "Patch_Diff",
+    "A_Execution_Logs",
+    "B_Execution_Logs"
   ];
   
   await fs.mkdir(path.join(process.cwd(), "data"), { recursive: true });
@@ -55,7 +60,7 @@ async function runEvaluation() {
     
     if (!setupInfo) {
       console.log(`[${caseId}] Falha crítica no setup inicial.`);
-      appendCsvRow([caseId, "0", "FALSE", "FALSE", "FALSE", "0", "SETUP_FAILED", "0", "", "", ""]);
+      appendCsvRow([caseId, "0", "FALSE", "FALSE", "FALSE", "0", "SETUP_FAILED", "0", "", "", "", "", ""]);
       continue;
     }
 
@@ -98,15 +103,21 @@ async function runEvaluation() {
       patchDiff
     };
 
-    const resultA = await testerAgent.invoke({ report: reportA }, { recursionLimit: 100 }) as PoCResult;
+    const resultA = await testerAgent.invoke({ report: reportA }, { recursionLimit: 100 }) as any;
     let reproducible = resultA.status === "success";
     let specific = false;
+    
+    // Ler o PoC gerado diretamente do sandbox, já que o ReAct agent usa write_file
     let pocCodeStr = "";
+    try {
+      pocCodeStr = await fs.readFile(path.join(sandboxDir, "test", "Exploit.t.sol"), "utf8");
+    } catch {
+      pocCodeStr = resultA.pocCode || "";
+    }
 
     // Se reproduziu, testa a especificidade aplicando o patch
     if (reproducible) {
       console.log(`\n[CENÁRIO A] Reproduzível! PoC gerado com sucesso. Testando especificidade no patch...`);
-      pocCodeStr = resultA.pocCode || resultA.solidityCode;
       
       const patchApplied = await applyPatchSmart(caseId, sandboxDir);
       if (patchApplied) {
@@ -127,6 +138,7 @@ async function runEvaluation() {
     }
 
     const lastErrorA = (resultA as any).lastError || (resultA.status === "success" ? "" : "TIMEOUT");
+    const logsA = Buffer.from(((resultA as any).executionLogs || []).join("\n---\n")).toString("base64");
 
     // ==========================================
     // CENÁRIO B: Teste de Falso Positivo (Patch)
@@ -139,6 +151,7 @@ async function runEvaluation() {
     let falsePositiveRejected = false;
     let resultB: Partial<PoCResult> = { iterations: 0, status: "failed" };
     let lastErrorB = "";
+    let logsB = "";
 
     if (setupInfoB) {
       // Aplica o patch ANTES de chamar o agente (tornando o código seguro)
@@ -159,7 +172,7 @@ async function runEvaluation() {
           patchDiff: undefined // Oculta o patch diff do LLM para este cenário
         };
 
-        resultB = await testerAgent.invoke({ report: reportB }, { recursionLimit: 100 }) as PoCResult;
+        resultB = await testerAgent.invoke({ report: reportB }, { recursionLimit: 100 }) as any;
         
         // Se falhou em gerar exploit, REJEITOU com sucesso o falso positivo!
         if (resultB.status !== "success") {
@@ -169,6 +182,7 @@ async function runEvaluation() {
           console.log(`\n[CENÁRIO B] ALUCINAÇÃO CRÍTICA! Agente hackeou um código que já estava corrigido.`);
         }
         lastErrorB = (resultB as any).lastError || (resultB.status === "success" ? "" : "TIMEOUT");
+        logsB = Buffer.from(((resultB as any).executionLogs || []).join("\n---\n")).toString("base64");
       }
     }
 
@@ -187,8 +201,10 @@ async function runEvaluation() {
       (resultB as any).infraIterations || 0,
       (resultB as any).exploitIterations || 0,
       lastErrorB,
-      reproducible ? escapeCsv(pocCodeStr) : "",
-      reproducible ? escapeCsv(patchDiff) : ""
+      Buffer.from(pocCodeStr).toString("base64"),
+      reproducible ? Buffer.from(patchDiff).toString("base64") : "",
+      logsA,
+      logsB
     ]);
 
     console.log(`[${caseId}] Avaliação concluída em ${totalTimeSec}s. Salvo no CSV.`);

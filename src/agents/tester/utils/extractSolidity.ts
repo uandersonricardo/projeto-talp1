@@ -1,16 +1,28 @@
 export function extractSolidity(llmOutput: string): string {
-  // Caso 1: bloco ```solidity ... ``` padrão
-  const match = llmOutput.match(/```solidity\s*([\s\S]*?)```/);
-  if (match) return match[1].trim();
+  let cleaned = llmOutput.trim();
 
-  // Caso 2: LLM omitiu backticks mas começa com pragma/SPDX
-  const trimmed = llmOutput.trim();
-  if (trimmed.startsWith("// SPDX") || trimmed.startsWith("pragma")) {
-    return trimmed;
+  // Bulletproof extraction: find SPDX or pragma and slice from there
+  const spdxIndex = cleaned.indexOf("// SPDX");
+  const pragmaIndex = cleaned.indexOf("pragma solidity");
+
+  let startIndex = -1;
+  if (spdxIndex !== -1 && pragmaIndex !== -1) {
+    startIndex = Math.min(spdxIndex, pragmaIndex);
+  } else if (spdxIndex !== -1) {
+    startIndex = spdxIndex;
+  } else if (pragmaIndex !== -1) {
+    startIndex = pragmaIndex;
   }
 
-  // Caso 3: output inválido — lançar erro descritivo
+  if (startIndex !== -1) {
+    // Slice from start index
+    cleaned = cleaned.slice(startIndex);
+    // Remove trailing backticks
+    cleaned = cleaned.replace(/\n?```[a-zA-Z]*\s*$/, "");
+    return cleaned.trim();
+  }
+
   throw new Error(
-    `LLM output não contém bloco Solidity válido. Preview: "${llmOutput.slice(0, 200)}"`
+    `LLM output não contém bloco Solidity válido (faltou SPDX ou pragma). Preview: "${cleaned.slice(0, 200)}"`
   );
 }

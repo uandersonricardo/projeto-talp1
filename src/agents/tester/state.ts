@@ -1,4 +1,5 @@
 import { Annotation } from "@langchain/langgraph";
+import { BaseMessage } from "@langchain/core/messages";
 import { VulnerabilityReport, OracleContext } from "./types.js";
 
 export const PoCStateAnnotation = Annotation.Root({
@@ -24,6 +25,11 @@ export const PoCStateAnnotation = Annotation.Root({
     reducer: (_, y) => y,           // overwrite — only the hack logic
   }),
 
+  vulnerabilityCategory: Annotation<string>({
+    default: () => "",
+    reducer: (_, y) => y,           // overwrite
+  }),
+
   infrastructurePhase: Annotation<boolean>({
     default: () => true,
     reducer: (_, y) => y,           // overwrite — true while fixing imports
@@ -37,6 +43,21 @@ export const PoCStateAnnotation = Annotation.Root({
   executionLogs: Annotation<string[]>({
     default: () => [],
     reducer: (x, y) => x.concat(y), // append — never lose previous logs
+  }),
+
+  messages: Annotation<BaseMessage[]>({
+    default: () => [],
+    reducer: (x, y) => x.concat(y),
+  }),
+
+  toolCallCount: Annotation<number>({
+    default: () => 0,
+    reducer: (x, y) => x + y,
+  }),
+
+  totalCost: Annotation<number>({
+    default: () => 0,
+    reducer: (x, y) => x + y,
   }),
 
   lastError: Annotation<string | null>({

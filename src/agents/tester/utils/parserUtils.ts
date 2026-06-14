@@ -14,7 +14,7 @@ export function extractConstructor(sourceCode: string, contractName: string): Co
       ContractDefinition: (node) => {
         if (node.name === contractName) {
           for (const part of node.subNodes) {
-            if (part.type === "FunctionDefinition" && part.isConstructor) {
+            if (part.type === "FunctionDefinition" && (part as any).isConstructor) {
               found = true;
               if (part.range) {
                   constructorParams = sourceCode.slice(part.range[0], part.range[1]).split("{")[0].trim();
