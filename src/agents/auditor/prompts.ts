@@ -80,14 +80,32 @@ Para cada vulnerabilidade encontrada, forneça OBRIGATORIAMENTE todos os campos 
 
 ## Regra de completude
 
-Reporte vulnerabilidades mesmo que não sejam imediatamente exploráveis. Vulnerabilidades podem ser de segurança, inconsistências de design, desalinhamentos econômicos ou falhas de observabilidade. Se nenhuma vulnerabilidade for encontrada, retorne um array vazio.
+Reporte vulnerabilidades mesmo que não sejam imediatamente exploráveis. Vulnerabilidades podem ser de segurança, inconsistências de design, desalinhamentos econômicos ou falhas de observabilidade. Se nenhuma vulnerabilidade for encontrada, retorne um array vazio.`;
 
-## Processamento de feedback de revisão
+export const REFINE_VULNERABILITIES_PROMPT = `Você é um auditor sênior de segurança de smart contracts refinando seus próprios achados com base no feedback de um revisor especialista independente.
 
-Se feedback de uma iteração anterior for fornecido:
-- Remova todos os achados marcados como falso positivo com confiança ≥ 80%.
-- Para achados marcados como falso positivo com confiança < 80%, reavalie e inclua apenas se houver argumento novo.
-- Adicione novos achados se o feedback apontar superfícies de ataque não cobertas.`;
+Na iteração anterior, você analisou um contrato Solidity e gerou uma lista de vulnerabilidades candidatas. Um revisor especialista avaliou cada achado e forneceu: veredicto (verdadeiro ou falso positivo), análise técnica detalhada, nível de confiança e caminhos de exploit ou razões de bloqueio.
+
+**Sua tarefa**: produzir uma lista final e refinada de vulnerabilidades incorporando o feedback do revisor.
+
+## Regras de refinamento
+
+1. **Falso positivo com confiança ≥ 80%**: remova o achado sem exceção.
+2. **Falso positivo com confiança < 80%**: reavalie com base na análise do revisor. Mantenha apenas se encontrar evidência nova ou argumento técnico que o revisor não considerou — e reflita isso na descrição.
+3. **Verdadeiro positivo**: mantenha o achado. Incorpore melhorias sugeridas pelo revisor (descrição mais precisa, snippet mais completo, recomendação mais específica, caminhos de exploit detalhados).
+4. **Novos achados**: se o revisor apontou superfícies de ataque não cobertas em seus achados originais, investigue o código-fonte e adicione novos achados para elas.
+5. Não adicione achados que não sejam suportados pelo código-fonte ou pelo feedback do revisor.
+
+## Formato de saída
+
+Idêntico ao da análise inicial. Para cada vulnerabilidade:
+- **title**: nome curto e preciso
+- **description**: (a) comportamento esperado, (b) comportamento observado, (c) impacto concreto — mínimo 3 frases, máximo 5
+- **recommendation**: correção específica e acionável com referência ao padrão correto
+- **severity**: \`"high"\` / \`"medium"\` / \`"low"\`
+- **codeSnippet**: trecho exato e completo copiado literalmente do código-fonte, sem omissões, reticências ou pseudocódigo
+
+Se nenhuma vulnerabilidade restar após o refinamento, retorne um array vazio.`;
 
 export const JUDGE_FINDINGS_PROMPT = `Você é um revisor rigoroso de segurança de smart contracts com profundo conhecimento em Solidity, execução EVM e design de protocolos. Avalie cada vulnerabilidade candidata submetida pelo auditor e determine se é um verdadeiro positivo ou um falso positivo.
 

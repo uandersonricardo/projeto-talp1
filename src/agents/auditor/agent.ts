@@ -24,11 +24,12 @@ import {
   GATHER_CONTEXT_PROMPT,
   JUDGE_FINDINGS_PROMPT,
   RANK_FILES_PROMPT,
+  REFINE_VULNERABILITIES_PROMPT,
 } from "./prompts.ts";
 import { AuditorState, CandidateFindingSchema, FileRankingSchema, JudgeReviewSchema } from "./state.ts";
 import { buildRepoTree } from "./tools/repo-tree/tool.ts";
 import { analyzeSolidityFile } from "./tools/solidity-analyzer/tool.ts";
-import { matchLines } from "./utils.ts";
+import { buildReviewBlocks, matchLines } from "./utils.ts";
 
 const llmHaiku = createLLM("anthropic", { model: "claude-haiku-4-5", maxTokens: 20000 });
 const llmOpus = createLLM("anthropic", { model: "claude-opus-4-8", temperature: null, maxTokens: 20000 });
@@ -85,9 +86,9 @@ const defineScope: GraphNode<typeof AuditorState> = async (state) => {
   const rankingModel = llmHaiku.withStructuredOutput(RankFilesSchema);
 
   const { rankings } = await rankingModel.invoke([
-    new SystemMessage(RANK_FILES_PROMPT),
+    new SystemMessage({ content: [{ type: "text", text: RANK_FILES_PROMPT, cache_control: { type: "ephemeral" } }] }),
     new HumanMessage(
-      `File tree:\n\`\`\`\n${fileTree}\n\`\`\`\n\nSolidity files to rank:\n${solFiles.map((f) => `- ${f}`).join("\n")}`,
+      `Árvore de arquivos:\n\`\`\`\n${fileTree}\n\`\`\`\n\nArquivos Solidity para classificar:\n${solFiles.map((f) => `- ${f}`).join("\n")}`,
     ),
   ]);
 
@@ -136,21 +137,24 @@ const gatherContext: GraphNode<typeof AuditorState> = async (state) => {
   const parts: string[] = [];
 
   if (docEntries.length > 0) {
-    parts.push("## Documentation\n");
+    parts.push("## Documentação\n");
     for (const { filePath, content } of docEntries) {
       parts.push(`### ${filePath}\n${content}`);
     }
   }
 
-  parts.push(`## File Tree\n\n\`\`\`\n${state.fileTree}\n\`\`\``);
+  parts.push(`## Árvore de Arquivos\n\n\`\`\`\n${state.fileTree}\n\`\`\``);
 
-  parts.push("## Structural Analysis\n");
+  parts.push("## Análise Estrutural\n");
   for (const { analysis } of solidityEntries) {
     parts.push(analysis);
   }
 
   const model = llmHaiku.withStructuredOutput(z.object({ context: z.string() }));
-  const result = await model.invoke([new SystemMessage(GATHER_CONTEXT_PROMPT), new HumanMessage(parts.join("\n\n"))]);
+  const result = await model.invoke([
+    new SystemMessage({ content: [{ type: "text", text: GATHER_CONTEXT_PROMPT, cache_control: { type: "ephemeral" } }] }),
+    new HumanMessage(parts.join("\n\n")),
+  ]);
 
   const fileTreeBlock = `## Árvore de Arquivos\n\n\`\`\`\n${state.fileTree}\n\`\`\``;
   const structuralBlock = `## Análise Estrutural dos Contratos\n\n${solidityEntries.map(({ analysis }) => analysis).join("\n\n---\n\n")}`;
@@ -166,19 +170,13 @@ const gatherContext: GraphNode<typeof AuditorState> = async (state) => {
 const findVulnerabilities: GraphNode<typeof AuditorState> = async (state) => {
   const model = llmOpus.withStructuredOutput(z.object({ findings: z.array(CandidateFindingSchema) }));
 
-  const previousFeedback =
-    state.judgeReviews.length > 0
-      ? state.judgeReviews
-          .map((r, i) => {
-            const title = state.candidateFindings[i]?.title ?? `Finding ${i + 1}`;
-            return `- "${title}": ${r.isFalsePositive ? "FALSE POSITIVE" : "TRUE POSITIVE"}\n  Judge: ${r.review}`;
-          })
-          .join("\n")
-      : null;
+  const isReflection = state.judgeReviews.length > 0;
 
   logger.info(
     `findVulnerabilities: invoking LLM for ${state.scope.length} file(s) in parallel (iteration ${state.reflectionCount + 1})`,
   );
+
+  const cachedContext = { type: "text" as const, text: `Contexto do Protocolo:\n${state.repoContext}`, cache_control: { type: "ephemeral" as const } };
 
   const allFindings = await Promise.all(
     state.scope.map(async (filePath) => {
@@ -190,16 +188,23 @@ const findVulnerabilities: GraphNode<typeof AuditorState> = async (state) => {
       }
       if (!source) return [];
 
-      let userMessage = `Contract (${filePath}):\n\n${source}\n\nProtocol Context:\n${state.repoContext}`;
-      if (previousFeedback) {
-        userMessage += `\n\nJudge feedback from previous iteration (iteration ${state.reflectionCount}):\n${previousFeedback}\n\nRevise your findings accordingly.`;
-      }
+      const fileEntries = isReflection
+        ? state.candidateFindings
+            .map((f, i) => ({ finding: f, review: state.judgeReviews[i] }))
+            .filter(({ finding }) => finding.path === filePath)
+        : [];
+
+      const isRefinement = fileEntries.length > 0;
+      const promptText = isRefinement ? REFINE_VULNERABILITIES_PROMPT : FIND_VULNERABILITIES_PROMPT;
+      const contractText = isRefinement
+        ? `Contrato (${filePath}):\n\n${source}\n\n${buildReviewBlocks(fileEntries, state.reflectionCount)}`
+        : `Contrato (${filePath}):\n\n${source}`;
 
       logger.debug(`findVulnerabilities: processing ${filePath}`);
 
       const result = await model.invoke([
-        new SystemMessage(FIND_VULNERABILITIES_PROMPT),
-        new HumanMessage(userMessage),
+        new SystemMessage({ content: [{ type: "text", text: promptText, cache_control: { type: "ephemeral" } }] }),
+        new HumanMessage({ content: [cachedContext, { type: "text", text: contractText }] }),
       ]);
 
       return result.findings.map((finding: any) => ({
@@ -231,6 +236,8 @@ const judgeFindings: GraphNode<typeof AuditorState> = async (state) => {
 
   logger.info(`judgeFindings: reviewing ${state.candidateFindings.length} candidate finding(s) in parallel`);
 
+  const cachedContext = { type: "text" as const, text: `Contexto do Protocolo:\n${state.repoContext}`, cache_control: { type: "ephemeral" as const } };
+
   const reviews = await Promise.all(
     state.candidateFindings.map(async (finding, i) => {
       let source: string;
@@ -240,14 +247,17 @@ const judgeFindings: GraphNode<typeof AuditorState> = async (state) => {
         source = "";
       }
 
-      const findingText = `[Finding ${i + 1}] ${finding.title}\nSeverity: ${finding.severity}\nDescription: ${finding.description}\nLocation: ${finding.path} lines ${finding.location}\nCode:\n\`\`\`solidity\n${finding.codeSnippet}\n\`\`\``;
+      const findingText = `[Achado ${i + 1}] ${finding.title}\nSeveridade: ${finding.severity}\nDescrição: ${finding.description}\nLocalização: ${finding.path} linhas ${finding.location}\nCódigo:\n\`\`\`solidity\n${finding.codeSnippet}\n\`\`\``;
 
       logger.debug(`judgeFindings: reviewing finding ${i + 1}: ${finding.title}`);
       return model.invoke([
-        new SystemMessage(JUDGE_FINDINGS_PROMPT),
-        new HumanMessage(
-          `Contract (${finding.path}):\n\n${source}\n\nProtocol Context:\n${state.repoContext}\n\nFinding to Review:\n\n${findingText}`,
-        ),
+        new SystemMessage({ content: [{ type: "text", text: JUDGE_FINDINGS_PROMPT, cache_control: { type: "ephemeral" } }] }),
+        new HumanMessage({
+          content: [
+            cachedContext,
+            { type: "text", text: `Contrato (${finding.path}):\n\n${source}\n\nAchado para Revisão:\n\n${findingText}` },
+          ],
+        }),
       ]);
     }),
   );
