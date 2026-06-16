@@ -1,4 +1,4 @@
-import { HumanMessage, SystemMessage, AIMessage } from "@langchain/core/messages";
+import { HumanMessage, SystemMessage, AIMessage, trimMessages } from "@langchain/core/messages";
 import { PoCState } from "../state.js";
 import { pocoTools } from "../tools.js";
 import { createLLM } from "../../../config/llm.js";
@@ -7,7 +7,7 @@ const MAX_STEPS = 30; // Max tool calls threshold
 const MAX_COST_USD = 3.0; // Max cost threshold
 
 // Initialize the model and bind tools
-const model = createLLM().bindTools(pocoTools);
+const model = (createLLM() as any).bindTools(pocoTools);
 
 const POCO_SYSTEM_PROMPT = `You are an expert smart contract security testing specialist. Generate executable Proof-of-Concept (PoC) exploits demonstrating vulnerabilities using Foundry.
 
@@ -20,17 +20,20 @@ Parse the vulnerability description (annotation) and analyze the vulnerability t
 ## Testing Framework Guidelines
 Use Foundry exclusively for testing. Implement proper \`setUp()\` functions with realistic contract states: i.e. initializing contracts with typical production values (reasonable token balances, realistic timestamps, standard protocol roles assigned). Utilize Foundry cheatcodes for test control: \`vm.prank()\` for identity switching, \`vm.deal()\` for ETH funding, \`vm.warp()\` for time manipulation, \`vm.expectRevert()\` for failure testing. Structure tests following Foundry conventions with clear test function names prefixed with \`test\`.
 
-## PoC Executability
-Ensure all generated code compiles successfully with the specified Solidity version. Verify that tests pass (exploits vulnerability) when the vulnerability exists and fail when properly patched. Use \`smart_contract_compile\` and \`smart_contract_test\` to validate. Resolve all compilation errors, import issues, and version conflicts while preserving original contract logic.
+## Setup and Infrastructure
+If the project has existing tests, use \`grep_search\` to inspect how they instantiate complex dependencies (factories, oracles, routers) and mimic their \`setUp()\`. If there are NO existing tests available, you MUST build the setup from scratch using standard Foundry cheatcodes. Inspect the base interfaces imported by the target contract (e.g. \`IERC20\`) and create simple local mock contracts or use \`address(this)\` when testing simple functions. DO NOT assume the target contract will accept \`0\` or \`address(this)\` for complex address arrays without checking the source code first.
 
-## Iterative Refinement
-Debug compilation errors, test failures, and logical inconsistencies systematically using forge output and detailed error messages. For import path errors, use \`grep_search\` to find the correct pattern. Continuously improve until tests compile, execute successfully, and accurately demonstrate the vulnerability. If stuck on the same technical issue for >3 attempts, shift to a minimal working demonstration—proving the vulnerability exists matters more than perfect test coverage or setup complexity.
+## Tool Usage and Iterative Refinement
+1. **Planning**: Use the \`todo_planner\` tool to maintain a plan (e.g. "1. Analyze constructor 2. Mock token 3. Write exploit"). Update it as you progress.
+2. **Writing Code**: Use \`write_file\` to create \`test/Exploit.t.sol\` from scratch.
+3. **Editing Code**: Use \`edit_file\` to fix specific bugs instead of rewriting the whole file. This saves tokens and reduces errors.
+4. **Execution**: Use \`smart_contract_compile\` and \`smart_contract_test\` to validate. Resolve all compilation errors, import issues, and version conflicts while preserving original contract logic.
 
 ## Exploit Soundness
 Ensure exploits logically reflect the described vulnerability. The attack vector must accurately represent the security issue. Avoid false positives—exploits should fail if the vulnerability is fixed. Verify that the PoC demonstrates the actual impact described in the vulnerability description (annotation).
 
 ## Exploit Quality
-Keep PoCs minimal and focused. Write only the test file—never modify contracts under test or the original codebase. Reuse existing test infrastructure when available. Create helper contracts or mocks only when the exploit requires them. Avoid assumptions about undocumented contract behavior.`;
+Keep PoCs minimal and focused. Write only the test file—never modify contracts under test, foundry.toml, remappings.txt, or the original codebase. The environment is already perfectly configured with all dependencies. Reuse existing test infrastructure when available. Create helper contracts or mocks only when the exploit requires them. Avoid assumptions about undocumented contract behavior.`;
 
 function calculateCost(inputTokens: number, outputTokens: number): number {
   // Claude 3.5 Sonnet pricing: $3.00 / 1M input tokens, $15.00 / 1M output tokens
@@ -81,9 +84,25 @@ export async function pocoAgentNode(state: PoCState): Promise<Partial<PoCState>>
   let attempts = 0;
   while (attempts < 3) {
     try {
-      response = await model.invoke(messages, {
+      const trimmedMessages = await trimMessages(messages, {
+        maxTokens: 100000,
+        strategy: "last",
+        tokenCounter: (msgs) => msgs.map(m => m.content ? m.content.toString().length / 4 : 0).reduce((a, b) => a + b, 0),
+        includeSystem: true,
+        allowPartial: false,
+      });
+
+      response = await model.invoke(trimmedMessages, {
         configurable: { sandboxDir: state.report.customSandboxDir || process.cwd() }
       });
+      
+      if (process.env.DEBUG_CONTEXT === "true") {
+        console.log(`\n--- Agent Response [Step ${state.toolCallCount}] ---`);
+        console.log(response.content);
+        if (response.tool_calls) {
+          console.log("Tool Calls:", JSON.stringify(response.tool_calls, null, 2));
+        }
+      }
       
       // Calculate costs
       if (response.response_metadata?.tokenUsage) {

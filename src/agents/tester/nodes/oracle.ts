@@ -5,7 +5,6 @@ import { generateLocalScaffold } from "../tools/scaffoldGenerator.js";
 import { extractConstructor } from "../utils/parserUtils.js";
 import { analyzeSolidityFile } from "../../auditor/tools/solidity-analyzer-tool.js";
 import { extractProjectContext } from "../utils/projectContextExtractor.js";
-import { createMissingDependencyStubs } from "../utils/dependencyStubber.js";
 import { OracleContext } from "../types.js";
 
 export async function oracleNode(state: PoCState): Promise<Partial<PoCState>> {
@@ -50,12 +49,6 @@ export async function oracleNode(state: PoCState): Promise<Partial<PoCState>> {
     } catch (e) {
       console.warn("[oracleNode] test cleanup failed:", (e as Error).message);
     }
-
-    try {
-      await createMissingDependencyStubs(state.report.customSandboxDir);
-    } catch (e) {
-      console.warn("[oracleNode] stub creation failed:", (e as Error).message);
-    }
   }
 
   const oracleContext: OracleContext = { 
@@ -68,49 +61,12 @@ export async function oracleNode(state: PoCState): Promise<Partial<PoCState>> {
     projectTestFilePath,
   };
 
-  // DETERMINISTIC TEMPLATE GENERATION
-  const targetName = state.report.affectedContract.name;
-  let setupArgs = "";
-  if (constructorInfo?.parameters && Array.isArray(constructorInfo.parameters)) {
-    const params = constructorInfo.parameters.map((p: any) => p.type === "address" ? "address(this)" : "0").join(", ");
-    setupArgs = params;
-  }
-
-  // Parse projectTestImports to extract only the import paths if any
-  let imports = `import "forge-std/Test.sol";\nimport "forge-std/console.sol";`;
-  if (projectTestImports) {
-    imports += "\n" + projectTestImports;
-  }
-  
-  // Use relative path for target based on report or assume src/
-  const targetFile = state.report.affectedContract.sourceFilePath ? `../${state.report.affectedContract.sourceFilePath}` : `../src/${targetName}.sol`;
-  imports += `\nimport { ${targetName} } from "${targetFile}";`;
-
-  const templateCode = `// SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.0;
-
-${imports}
-
-contract ExploitTest is Test {
-    ${targetName} target;
-    address constant ATTACKER = address(0xBEEF);
-
-    function setUp() public virtual {
-        target = new ${targetName}(${setupArgs});
-        vm.deal(ATTACKER, 100 ether);
-        require(address(target) != address(0), "Target must be deployed");
-    }
-
-    function test_Exploit() public {
-        // INJECT_HACK
-    }
-}`;
-
-  console.log("[oracleNode] scaffold gerado, context built. Deterministic Template generated.");
+  // No longer generating static template. We leave it to the agent to build the setup.
+  console.log("[oracleNode] scaffold generation skipped. Context built.");
   return { 
     oracleContext, 
-    templateCode, 
-    pocCode: templateCode, // Sets initial state so foundry can try compiling it
-    infrastructurePhase: false // SKIPPING INFRA LOOP!
+    templateCode: "", 
+    pocCode: "", 
+    infrastructurePhase: false
   };
 }

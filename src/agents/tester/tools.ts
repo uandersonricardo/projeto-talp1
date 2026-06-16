@@ -98,6 +98,9 @@ export const grepSearchTool = tool(
 export const writeFileTool = tool(
   async ({ filePath, content }, config) => {
     try {
+      if (filePath === "foundry.toml" || filePath === "remappings.txt" || filePath.endsWith(".gitmodules")) {
+        return "Error: You are strictly forbidden from modifying foundry.toml, remappings.txt, or .gitmodules. The environment is already perfectly configured.";
+      }
       const sandboxDir = config?.configurable?.sandboxDir || process.cwd();
       const absolutePath = path.resolve(sandboxDir, filePath);
       
@@ -124,6 +127,51 @@ export const writeFileTool = tool(
   }
 );
 
+export const editFileTool = tool(
+  async ({ filePath, searchString, replacementString }, config) => {
+    try {
+      if (filePath === "foundry.toml" || filePath === "remappings.txt" || filePath.endsWith(".gitmodules")) {
+        return "Error: You are strictly forbidden from modifying foundry.toml, remappings.txt, or .gitmodules. The environment is already perfectly configured.";
+      }
+      const sandboxDir = config?.configurable?.sandboxDir || process.cwd();
+      const absolutePath = path.resolve(sandboxDir, filePath);
+      
+      if (!absolutePath.startsWith(path.resolve(sandboxDir))) {
+        return "Error: Access denied. Cannot edit files outside the project sandbox.";
+      }
+
+      const content = await fs.readFile(absolutePath, "utf-8");
+      
+      if (!content.includes(searchString)) {
+        return "Error: searchString not found in the file. Ensure you pass the exact string to be replaced.";
+      }
+      
+      // We only replace the first occurrence or all? Replacing all is safer if they match exactly.
+      // But standard string replace only replaces the first occurrence, which is safer if multiple matches exist.
+      const newContent = content.replace(searchString, replacementString);
+      
+      if (newContent === content) {
+         return "Error: replacement resulted in no changes.";
+      }
+      
+      await fs.writeFile(absolutePath, newContent, "utf-8");
+      
+      return `Successfully edited ${filePath}`;
+    } catch (e: any) {
+      return `Error editing file: ${e.message}`;
+    }
+  },
+  {
+    name: "edit_file",
+    description: "Edits an existing file by replacing a specific block of text. Use this instead of write_file for small changes.",
+    schema: z.object({
+      filePath: z.string().describe("The relative path to edit (e.g. 'test/Exploit.t.sol')"),
+      searchString: z.string().describe("The exact text block to search for and replace. Must match perfectly including whitespace."),
+      replacementString: z.string().describe("The new text block to insert in place of searchString."),
+    }),
+  }
+);
+
 // ---------------------------------------------------------------------------
 // Smart Contract Tools (Execution Feedback)
 // ---------------------------------------------------------------------------
@@ -142,15 +190,15 @@ export const smartContractCompileTool = tool(
         }
       );
       
-      const out = stdout ? String(stdout).slice(-15000) : "";
-      const errOut = stderr ? String(stderr).slice(-15000) : "";
+      const out = stdout ? String(stdout).slice(-4000) : "";
+      const errOut = stderr ? String(stderr).slice(-4000) : "";
       return `Compilation Successful:\nSTDOUT:\n${out}\nSTDERR:\n${errOut}`;
     } catch (err: any) {
       if (err.killed || err.signal === "SIGTERM") {
         return "Error: Compilation timed out after 30s.";
       }
-      const out = err.stdout ? String(err.stdout).slice(-15000) : "";
-      const errOut = err.stderr ? String(err.stderr).slice(-15000) : "";
+      const out = err.stdout ? String(err.stdout).slice(-4000) : "";
+      const errOut = err.stderr ? String(err.stderr).slice(-4000) : "";
       return `Compilation Failed:\nSTDOUT:\n${out}\nSTDERR:\n${errOut}`;
     }
   },
@@ -176,15 +224,15 @@ export const smartContractTestTool = tool(
         }
       );
       
-      const out = stdout ? String(stdout).slice(-15000) : "";
-      const errOut = stderr ? String(stderr).slice(-15000) : "";
+      const out = stdout ? String(stdout).slice(-4000) : "";
+      const errOut = stderr ? String(stderr).slice(-4000) : "";
       return `Test Passed Successfully!\nSTDOUT:\n${out}\nSTDERR:\n${errOut}`;
     } catch (err: any) {
       if (err.killed || err.signal === "SIGTERM") {
         return "Error: Test execution timed out after 60s.";
       }
-      const out = err.stdout ? String(err.stdout).slice(-15000) : "";
-      const errOut = err.stderr ? String(err.stderr).slice(-15000) : "";
+      const out = err.stdout ? String(err.stdout).slice(-4000) : "";
+      const errOut = err.stderr ? String(err.stderr).slice(-4000) : "";
       return `Test Failed:\nSTDOUT:\n${out}\nSTDERR:\n${errOut}`;
     }
   },
@@ -246,6 +294,7 @@ export const pocoTools = [
   listDirTool,
   grepSearchTool,
   writeFileTool,
+  editFileTool,
   smartContractCompileTool,
   smartContractTestTool,
   todoPlannerTool

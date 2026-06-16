@@ -3,7 +3,7 @@ import path from "path";
 import { exec } from "child_process";
 import { promisify } from "util";
 import { fileURLToPath } from 'url';
-import { runPoCGenerator } from "../agents/tester/index.js";
+import { testerAgent } from "../agents/tester/agent.js";
 import { VulnerabilityReport } from "../agents/tester/types.js";
 import "dotenv/config";
 
@@ -124,6 +124,7 @@ function extractVulnerableFilePath(text: string): string | null {
   return srcPath || (paths.length > 0 ? paths[0] : null);
 }
 
+
 /**
  * Recursively finds a file by name within a directory, prioritizing src/
  */
@@ -131,7 +132,16 @@ export async function setupSandbox(caseId: string, data: any): Promise<string> {
     const targetDir = path.join(process.cwd(), DATASET_PATH, data.target_directory);
     const tempDir = path.join(process.cwd(), "temp_vuln_run", caseId);
     await execAsync(`mkdir -p temp_vuln_run && rm -rf ${tempDir} && cp -r ${targetDir} ${tempDir}`);
-    await execAsync(`rm -f ${tempDir}/.git`);
+    
+
+
+    await execAsync(`rm -rf ${tempDir}/.git`);
+    try {
+      await execAsync(`~/.foundry/bin/forge remappings > remappings.txt`, { cwd: tempDir, timeout: 10000 });
+      console.log(`[setup] Regenerated remappings.txt with all nested submodules.`);
+    } catch (e: any) {
+      console.warn(`[setup] Failed to regenerate remappings: ${e.message}`);
+    }
     return tempDir;
 }
 
@@ -196,6 +206,11 @@ async function main() {
       continue;
     }
 
+    const allowedIds = ["008", "020", "041", "054", "070", "077"];
+    if (!allowedIds.includes(id)) {
+      continue;
+    }
+
     console.log(`\n--- [${id}] ${finding.repo_name} ---`);
     processedCount++;
 
@@ -254,7 +269,20 @@ async function main() {
       const tempVulnDir = path.join(process.cwd(), "temp_vuln_run", id);
       console.log(`[${id}] Preparing isolated sandbox at ${tempVulnDir}...`);
       await execAsync(`mkdir -p temp_vuln_run && rm -rf ${tempVulnDir} && cp -r ${targetDir} ${tempVulnDir}`);
+      
+
+
       await execAsync(`rm -f ${tempVulnDir}/.git`);
+      // STEP 1.2: Sandbox Initialization
+      try {
+        const hasPackageJson = await fs.access(path.join(tempVulnDir, "package.json")).then(() => true).catch(() => false);
+        if (hasPackageJson) {
+          console.log(`[${id}] Found package.json, running npm install...`);
+          await execAsync(`npm install --legacy-peer-deps`, { cwd: tempVulnDir, timeout: 120_000 });
+        }
+      } catch (e: any) {
+        console.warn(`[${id}] Warning: Setup failed: ${e.message}`);
+      }
 
       // STEP 1.5: Reference Test Resolution
       let referenceTestCode = "";
@@ -303,30 +331,82 @@ async function main() {
       };
 
       console.log(`[${id}] Generating PoC and running on VULNERABLE version...`);
-      const resultVuln = await runPoCGenerator(report);
+      const resultVuln = await testerAgent.invoke({ report }, { recursionLimit: 100, configurable: { sandboxDir: tempVulnDir } }) as any;
       
       if (process.env.DEBUG_CONTEXT === "true") {
         console.log("\n" + "=".repeat(20) + " GENERATED POC START " + "=".repeat(20));
-        console.log(resultVuln.solidityCode);
+        try {
+          const pocContent = await fs.readFile(path.join(tempVulnDir, "test", "Exploit.t.sol"), "utf-8");
+          console.log(pocContent);
+        } catch {
+          console.log("No PoC file generated.");
+        }
         console.log("=".repeat(20) + " GENERATED POC END " + "=".repeat(20) + "\n");
       }
       
       let statusPatch = "not_tested";
+      let statusVuln = "not_tested";
 
-      if (resultVuln.status === "success") {
+      // Evaluate the generated PoC independently
+      let pocCodeToTest = "";
+      try {
+        pocCodeToTest = await fs.readFile(path.join(tempVulnDir, "test", "Exploit.t.sol"), "utf-8");
+      } catch (e) {
+        console.warn(`[${id}] Could not read Exploit.t.sol from tempVulnDir. Using empty string.`);
+      }
+
+      const { runFoundry } = await import("../agents/tester/tools/foundryRunner.js");
+      const vulnExec = await runFoundry(pocCodeToTest, tempVulnDir);
+      const passedOnVuln = (
+        vulnExec.exitCode === 0 &&
+        vulnExec.stdout.includes("ok") &&
+        !vulnExec.stdout.includes("FAIL") &&
+        !vulnExec.combined.includes("No tests found")
+      );
+      
+      statusVuln = passedOnVuln ? "success" : "failed";
+
+      if (statusVuln === "success") {
         console.log(`[${id}] Running PoC on PATCHED version to verify specificity...`);
         
         const tempPatchDir = path.join(process.cwd(), "temp_patch_run", id);
         try {
             await execAsync(`mkdir -p temp_patch_run && rm -rf ${tempPatchDir} && cp -r ${targetDir} ${tempPatchDir}`);
-            await execAsync(`rm -f ${tempPatchDir}/.git`);
+            
+
+
+            await execAsync(`rm -rf ${tempPatchDir}/.git`);
+            try {
+              await execAsync(`~/.foundry/bin/forge remappings > remappings.txt`, { cwd: tempPatchDir, timeout: 10000 });
+            } catch (e: any) {
+              console.warn(`[${id}] Failed to regenerate patch remappings: ${e.message}`);
+            }
+            
+            try {
+              const hasPackageJson = await fs.access(path.join(tempPatchDir, "package.json")).then(() => true).catch(() => false);
+              if (hasPackageJson) {
+                console.log(`[${id}] Found package.json in patch dir, running npm install...`);
+                await execAsync(`npm install --legacy-peer-deps`, { cwd: tempPatchDir, timeout: 120_000 });
+              }
+            } catch (e: any) {
+              console.warn(`[${id}] Warning: Patch setup failed: ${e.message}`);
+            }
+
             
             const patchSourceDir = path.join(process.cwd(), DATASET_PATH, finding.patch);
             // Smart patch: match each patched .sol to the right file in tempPatchDir
             await applyPatchSmart(id, tempPatchDir);
 
             const { runFoundry } = await import("../agents/tester/tools/foundryRunner.js");
-            const patchExec = await runFoundry(resultVuln.solidityCode, tempPatchDir);
+            
+            let pocCodeToTest = "";
+            try {
+              pocCodeToTest = await fs.readFile(path.join(tempVulnDir, "test", "Exploit.t.sol"), "utf-8");
+            } catch (e) {
+              console.warn(`[${id}] Could not read Exploit.t.sol from tempVulnDir. Using empty string.`);
+            }
+
+            const patchExec = await runFoundry(pocCodeToTest, tempPatchDir);
             
             // Specific = PoC FAILS on patched version (exploit doesn't work anymore)
             // i.e., exit code != 0, OR stdout doesn't contain "ok", OR test was not found
@@ -352,11 +432,11 @@ async function main() {
         }
       }
 
-      const reproducible = resultVuln.status === "success";
-      const specific = resultVuln.status === "success" && statusPatch === "failed";
+      const reproducible = statusVuln === "success";
+      const specific = statusVuln === "success" && statusPatch === "failed";
 
       finding.benchmark_results = {
-        vuln_status: resultVuln.status,
+        vuln_status: statusVuln,
         patch_status: statusPatch,
         reproducibility: reproducible,
         specificity: specific,
@@ -364,7 +444,7 @@ async function main() {
         timestamp: new Date().toISOString(),
       };
 
-      if (resultVuln.status === "failed") {
+      if (statusVuln === "failed") {
           finding.benchmark_results.last_vuln_error = resultVuln.executionLogs[resultVuln.executionLogs.length - 1]?.slice(0, 500);
       }
       

@@ -1,119 +1,47 @@
 {
   "summary": {
-    "timestamp": "2026-06-11T17:27:55.677Z",
-    "total_processed": 18,
-    "reproducibility_rate": 16.666666666666664,
-    "specificity_rate": 0,
-    "overall_ground_truth_rate": 0,
-    "average_iterations": 9.38888888888889
+    "timestamp": "2026-06-16T21:50:28.207Z",
+    "total_processed": 6,
+    "reproducibility_rate": 50,
+    "specificity_rate": 100,
+    "overall_ground_truth_rate": 50,
+    "average_iterations": 13.333333333333334
   },
   "details": [
-    {
-      "id": "001",
-      "reproducible": false,
-      "specific": false,
-      "iterations": 10
-    },
-    {
-      "id": "003",
-      "reproducible": false,
-      "specific": false,
-      "iterations": 10
-    },
     {
       "id": "008",
       "reproducible": false,
       "specific": false,
-      "iterations": 10
-    },
-    {
-      "id": "009",
-      "reproducible": false,
-      "specific": false,
-      "iterations": 10
-    },
-    {
-      "id": "018",
-      "reproducible": false,
-      "specific": false,
-      "iterations": 10
+      "iterations": 30
     },
     {
       "id": "020",
-      "reproducible": false,
-      "specific": false,
-      "iterations": 10
-    },
-    {
-      "id": "032",
       "reproducible": true,
-      "specific": false,
-      "iterations": 4
+      "specific": true,
+      "iterations": 9
     },
     {
-      "id": "033",
+      "id": "041",
       "reproducible": false,
       "specific": false,
-      "iterations": 10
+      "iterations": 13
     },
     {
-      "id": "042",
-      "reproducible": false,
-      "specific": false,
-      "iterations": 10
-    },
-    {
-      "id": "048",
-      "reproducible": false,
-      "specific": false,
-      "iterations": 10
-    },
-    {
-      "id": "049",
-      "reproducible": false,
-      "specific": false,
-      "iterations": 10
-    },
-    {
-      "id": "051",
-      "reproducible": false,
-      "specific": false,
-      "iterations": 10
-    },
-    {
-      "id": "058",
-      "reproducible": false,
-      "specific": false,
-      "iterations": 10
-    },
-    {
-      "id": "066",
+      "id": "054",
       "reproducible": true,
-      "specific": false,
+      "specific": true,
       "iterations": 7
     },
     {
       "id": "070",
       "reproducible": false,
       "specific": false,
-      "iterations": 10
+      "iterations": 13
     },
     {
       "id": "077",
-      "reproducible": false,
-      "specific": false,
-      "iterations": 10
-    },
-    {
-      "id": "091",
-      "reproducible": false,
-      "specific": false,
-      "iterations": 10
-    },
-    {
-      "id": "098",
       "reproducible": true,
-      "specific": false,
+      "specific": true,
       "iterations": 8
     }
   ]

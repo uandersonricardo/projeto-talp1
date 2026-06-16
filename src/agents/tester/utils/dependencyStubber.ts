@@ -17,11 +17,14 @@ export async function createMissingDependencyStubs(sandboxDir: string): Promise<
   try {
     const { stdout, stderr } = await execAsync(
       `cd "${sandboxDir}" && forge build --no-cache 2>&1 || true`,
-      { timeout: 60_000 }
+      { 
+        timeout: 60_000,
+        env: { ...process.env, PATH: `${process.env.HOME}/.foundry/bin:${process.env.PATH}` }
+      }
     );
     combined = stdout + stderr;
   } catch (e: any) {
-    combined = e.message || "";
+    combined = e.stdout || e.stderr || e.message || "";
   }
 
   // Extract all "Source X not found" paths
