@@ -62,7 +62,9 @@ export async function runFoundry(solidityCode: string, sandboxDir: string = DEFA
   } catch (err: any) {
     if (err.killed || err.signal === "SIGTERM") {
       return {
-        exitCode: -1, stdout: "", stderr: "Forge timed out",
+        exitCode: -1,
+        stdout: "",
+        stderr: "Forge timed out",
         combined: `TIMEOUT após ${TIMEOUT_MS / 1000}s`,
         timedOut: true,
       };

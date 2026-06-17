@@ -5,7 +5,7 @@ import { END, type GraphNode, START, StateGraph } from "@langchain/langgraph";
 import { z } from "zod";
 
 import { createLLM } from "../../config/llm.ts";
-import { logger } from "../../logger.ts";
+import { emitStep, logger } from "../../logger.ts";
 import { MAX_DOC_CHARS, MAX_REFLECTIONS, MAX_SOL_CHARS, MIN_FILE_IMPORTANCE } from "./config.ts";
 import {
   FIND_VULNERABILITIES_PROMPT,
@@ -24,7 +24,8 @@ const llmOpus = createLLM("anthropic", { model: "claude-opus-4-8", temperature: 
 const llmSonnet = createLLM("anthropic", { model: "claude-sonnet-4-6", maxTokens: 20000 });
 
 const defineScope: GraphNode<typeof AuditorState> = async (state) => {
-  logger.info(`defineScope: walking repo at ${state.repoPath}`);
+  emitStep({ agent: "auditor", step: "scope", status: "running" });
+  logger.info(`[Auditor] defineScope: percorrendo repositório em ${state.repoPath}`);
 
   const solFiles: string[] = [];
   const docFiles: string[] = [];
@@ -33,12 +34,16 @@ const defineScope: GraphNode<typeof AuditorState> = async (state) => {
 
   const fileTree = buildRepoTree(state.repoPath);
 
-  logger.info(`defineScope: found ${solFiles.length} Solidity file(s), ${docFiles.length} doc file(s)`);
-  logger.debug(`defineScope: Solidity files: ${JSON.stringify(solFiles)}`);
-  logger.debug(`defineScope: doc files: ${JSON.stringify(docFiles)}`);
-  logger.debug(`defineScope: file tree:\n${fileTree}`);
+  logger.info(
+    `[Auditor] defineScope: encontrado(s) ${solFiles.length} arquivo(s) Solidity e ${docFiles.length} arquivo(s) de documentação`,
+  );
+  logger.debug(`[Auditor] defineScope: arquivos Solidity: ${JSON.stringify(solFiles)}`);
+  logger.debug(`[Auditor] defineScope: arquivos de documentação: ${JSON.stringify(docFiles)}`);
+  logger.debug(`[Auditor] defineScope: árvore de arquivos:\n${fileTree}`);
 
-  logger.info("defineScope: ranking files by importance");
+  emitStep({ agent: "auditor", step: "scope", status: "done" });
+
+  logger.info("[Auditor] defineScope: rankeando arquivos por importância");
 
   const RankFilesSchema = z.object({ rankings: z.array(FileRankingSchema) });
   const rankingModel = llmHaiku.withStructuredOutput(RankFilesSchema);
@@ -52,20 +57,25 @@ const defineScope: GraphNode<typeof AuditorState> = async (state) => {
 
   const sorted = [...rankings].sort((a, b) => b.importance - a.importance);
   logger.info(
-    `defineScope: rankings:\n${sorted.map((r) => `  [${r.importance}/5] ${r.filePath} — ${r.reasoning}`).join("\n")}`,
+    `[Auditor] defineScope: rankings:\n${sorted.map((r) => `  [${r.importance}/5] ${r.filePath} — ${r.reasoning}`).join("\n")}`,
   );
 
   const importantFiles = sorted.filter((r) => r.importance >= MIN_FILE_IMPORTANCE).map((r) => r.filePath);
   const skipped = solFiles.length - importantFiles.length;
   if (skipped > 0) {
-    logger.info(`defineScope: skipping ${skipped} low-importance file(s) (importance < ${MIN_FILE_IMPORTANCE})`);
+    logger.info(
+      `[Auditor] defineScope: pulando ${skipped} arquivo(s) de baixa importância (importância < ${MIN_FILE_IMPORTANCE})`,
+    );
   }
 
   return { scope: importantFiles, docs: docFiles, fileTree, fileRankings: sorted };
 };
 
 const gatherContext: GraphNode<typeof AuditorState> = async (state) => {
-  logger.info(`gatherContext: processing ${state.scope.length} Solidity file(s) and ${state.docs.length} doc file(s)`);
+  emitStep({ agent: "auditor", step: "ctx", status: "running" });
+  logger.info(
+    `[Auditor] gatherContext: processando ${state.scope.length} arquivo(s) Solidity e ${state.docs.length} arquivo(s) de documentação`,
+  );
 
   const readFile = (filePath: string): string => {
     try {
@@ -120,9 +130,11 @@ const gatherContext: GraphNode<typeof AuditorState> = async (state) => {
   const structuralBlock = `## Análise Estrutural dos Contratos\n\n${solidityEntries.map(({ analysis }) => analysis).join("\n\n---\n\n")}`;
   const repoContext = [result.context, fileTreeBlock, structuralBlock].join("\n\n");
 
-  logger.debug(`gatherContext: full context:\n${parts.join("\n\n")}`);
-  logger.info(`gatherContext: context built (${repoContext.length} chars)`);
-  logger.debug(`gatherContext: compact context:\n${repoContext}`);
+  logger.debug(`[Auditor] gatherContext: contexto completo:\n${parts.join("\n\n")}`);
+  logger.info(`[Auditor] gatherContext: contexto construído (${repoContext.length} caracteres)`);
+  logger.debug(`[Auditor] gatherContext: contexto compactado:\n${repoContext}`);
+
+  emitStep({ agent: "auditor", step: "ctx", status: "done" });
 
   return { repoContext };
 };
@@ -133,8 +145,10 @@ const findVulnerabilities: GraphNode<typeof AuditorState> = async (state) => {
   const isReflection = state.judgeReviews.length > 0;
 
   logger.info(
-    `findVulnerabilities: invoking LLM for ${state.scope.length} file(s) in parallel (iteration ${state.reflectionCount + 1})`,
+    `[Auditor] findVulnerabilities: invocando LLM para ${state.scope.length} arquivo(s) em paralelo (iteração ${state.reflectionCount + 1})`,
   );
+
+  emitStep({ agent: "auditor", step: "find", status: "running", detail: `iter ${state.reflectionCount + 1}` });
 
   const cachedContext = {
     type: "text" as const,
@@ -163,7 +177,7 @@ const findVulnerabilities: GraphNode<typeof AuditorState> = async (state) => {
       ? `Contrato (${filePath}):\n\n${source}\n\n${buildReviewBlocks(fileEntries, state.reflectionCount)}`
       : `Contrato (${filePath}):\n\n${source}`;
 
-    logger.debug(`findVulnerabilities: processing ${filePath}`);
+    logger.debug(`[Auditor] findVulnerabilities: processando ${filePath}`);
 
     const result = await model.invoke([
       new SystemMessage({ content: [{ type: "text", text: promptText, cache_control: { type: "ephemeral" } }] }),
@@ -182,15 +196,20 @@ const findVulnerabilities: GraphNode<typeof AuditorState> = async (state) => {
   const restFindings = await Promise.all(restFiles.map(processFile));
   const candidateFindings = [firstFindings, ...restFindings].flat();
 
-  logger.info(`findVulnerabilities: LLM returned ${candidateFindings.length} total candidate finding(s)`);
-  logger.debug(`findVulnerabilities: findings:\n${JSON.stringify(candidateFindings, null, 2)}`);
+  logger.info(
+    `[Auditor] findVulnerabilities: LLM retornou ${candidateFindings.length} finding(s) candidato(s) no total`,
+  );
+  logger.debug(`[Auditor] findVulnerabilities: findings:\n${JSON.stringify(candidateFindings, null, 2)}`);
 
+  emitStep({ agent: "auditor", step: "find", status: "done" });
   return { candidateFindings };
 };
 
 const judgeFindings: GraphNode<typeof AuditorState> = async (state) => {
+  emitStep({ agent: "auditor", step: "judge", status: "running" });
   if (state.candidateFindings.length === 0) {
-    logger.info("judgeFindings: no candidate findings to review, skipping LLM call");
+    logger.info("[Auditor] judgeFindings: sem findings candidatos para revisar, pulando chamada ao LLM");
+    emitStep({ agent: "auditor", step: "judge", status: "done" });
     return {
       judgeReviews: [],
       findings: [],
@@ -200,7 +219,9 @@ const judgeFindings: GraphNode<typeof AuditorState> = async (state) => {
 
   const model = llmSonnet.withStructuredOutput(JudgeReviewSchema);
 
-  logger.info(`judgeFindings: reviewing ${state.candidateFindings.length} candidate finding(s) in parallel`);
+  logger.info(
+    `[Auditor] judgeFindings: revisando ${state.candidateFindings.length} finding(s) candidato(s) em paralelo`,
+  );
 
   const cachedContext = {
     type: "text" as const,
@@ -218,7 +239,7 @@ const judgeFindings: GraphNode<typeof AuditorState> = async (state) => {
 
     const findingText = `[Achado ${i + 1}] ${finding.title}\nSeveridade: ${finding.severity}\nDescrição: ${finding.description}\nLocalização: ${finding.path} linhas ${finding.location}\nCódigo:\n\`\`\`solidity\n${finding.codeSnippet}\n\`\`\``;
 
-    logger.debug(`judgeFindings: reviewing finding ${i + 1}: ${finding.title}`);
+    logger.debug(`[Auditor] judgeFindings: revisando finding ${i + 1}: ${finding.title}`);
     return model.invoke([
       new SystemMessage({
         content: [{ type: "text", text: JUDGE_FINDINGS_PROMPT, cache_control: { type: "ephemeral" } }],
@@ -252,9 +273,10 @@ const judgeFindings: GraphNode<typeof AuditorState> = async (state) => {
 
   const falsePositiveCount = state.candidateFindings.length - findings.length;
 
-  logger.info(`judgeFindings: ${findings.length} confirmed, ${falsePositiveCount} false positive(s)`);
-  logger.debug(`judgeFindings: reviews:\n${JSON.stringify(reviews, null, 2)}`);
+  logger.info(`[Auditor] judgeFindings: ${findings.length} confirmado(s), ${falsePositiveCount} falso(s) positivo(s)`);
+  logger.debug(`[Auditor] judgeFindings: revisões:\n${JSON.stringify(reviews, null, 2)}`);
 
+  emitStep({ agent: "auditor", step: "judge", status: "done" });
   return {
     judgeReviews: reviews,
     findings,
