@@ -1,60 +1,27 @@
 import fs from "node:fs";
-import path from "node:path";
 
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { END, type GraphNode, START, StateGraph } from "@langchain/langgraph";
 import { z } from "zod";
 
-import { logger } from "../../logger.ts";
 import { createLLM } from "../../config/llm.ts";
-import { JUDGE_FINDINGS_PROMPT, FIND_VULNERABILITIES_PROMPT, GATHER_CONTEXT_PROMPT } from "./prompts.ts";
-import { AuditorState, JudgeReviewSchema, CandidateFindingSchema } from "./state.ts";
-import { analyzeSolidityFile } from "./tools/solidity-analyzer-tool.ts";
-import { buildRepoTree } from "./tools/repo-tree-tool.ts";
+import { logger } from "../../logger.ts";
+import { MAX_DOC_CHARS, MAX_REFLECTIONS, MAX_SOL_CHARS, MIN_FILE_IMPORTANCE } from "./config.ts";
 import {
-  DOC_BASENAMES,
-  DOC_EXTS,
-  MAX_DEPTH,
-  MAX_DOC_CHARS,
-  MAX_REFLECTIONS,
-  MAX_SOL_CHARS,
-  SKIP_DIRS,
-  SOL_EXT,
-  SOL_TEST_SUFFIXES,
-} from "./config.ts";
-import { matchLines } from "./utils.ts";
+  FIND_VULNERABILITIES_PROMPT,
+  GATHER_CONTEXT_PROMPT,
+  JUDGE_FINDINGS_PROMPT,
+  RANK_FILES_PROMPT,
+  REFINE_VULNERABILITIES_PROMPT,
+} from "./prompts.ts";
+import { AuditorState, CandidateFindingSchema, FileRankingSchema, JudgeReviewSchema } from "./state.ts";
+import { buildRepoTree } from "./tools/repo-tree/tool.ts";
+import { analyzeSolidityFile } from "./tools/solidity-analyzer/tool.ts";
+import { buildReviewBlocks, matchLines, walkDirectory } from "./utils.ts";
 
-const llm = createLLM();
-
-const walkDirectory = (dir: string, depth: number, solFiles: string[], docFiles: string[]) => {
-  if (depth > MAX_DEPTH) return;
-
-  let entries: fs.Dirent[];
-  try {
-    entries = fs.readdirSync(dir, { withFileTypes: true });
-  } catch {
-    return;
-  }
-
-  for (const entry of entries) {
-    if (entry.isDirectory()) {
-      if (!SKIP_DIRS.has(entry.name)) {
-        walkDirectory(path.join(dir, entry.name), depth + 1, solFiles, docFiles);
-      }
-    } else if (entry.isFile()) {
-      const fullPath = path.join(dir, entry.name);
-      const ext = path.extname(entry.name).toLowerCase();
-      const base = path.basename(entry.name, ext).toLowerCase();
-
-      if (ext === SOL_EXT) {
-        const isTest = SOL_TEST_SUFFIXES.some((suffix) => entry.name.endsWith(suffix));
-        if (!isTest) solFiles.push(fullPath);
-      } else if (DOC_EXTS.has(ext) || DOC_BASENAMES.has(base)) {
-        docFiles.push(fullPath);
-      }
-    }
-  }
-};
+const llmHaiku = createLLM("anthropic", { model: "claude-haiku-4-5", maxTokens: 20000 });
+const llmOpus = createLLM("anthropic", { model: "claude-opus-4-8", temperature: null, maxTokens: 20000 });
+const llmSonnet = createLLM("anthropic", { model: "claude-sonnet-4-6", maxTokens: 20000 });
 
 const defineScope: GraphNode<typeof AuditorState> = async (state) => {
   logger.info(`defineScope: walking repo at ${state.repoPath}`);
@@ -71,7 +38,30 @@ const defineScope: GraphNode<typeof AuditorState> = async (state) => {
   logger.debug(`defineScope: doc files: ${JSON.stringify(docFiles)}`);
   logger.debug(`defineScope: file tree:\n${fileTree}`);
 
-  return { scope: solFiles, docs: docFiles, fileTree };
+  logger.info("defineScope: ranking files by importance");
+
+  const RankFilesSchema = z.object({ rankings: z.array(FileRankingSchema) });
+  const rankingModel = llmHaiku.withStructuredOutput(RankFilesSchema);
+
+  const { rankings } = await rankingModel.invoke([
+    new SystemMessage({ content: [{ type: "text", text: RANK_FILES_PROMPT, cache_control: { type: "ephemeral" } }] }),
+    new HumanMessage(
+      `Árvore de arquivos:\n\`\`\`\n${fileTree}\n\`\`\`\n\nArquivos Solidity para classificar:\n${solFiles.map((f) => `- ${f}`).join("\n")}`,
+    ),
+  ]);
+
+  const sorted = [...rankings].sort((a, b) => b.importance - a.importance);
+  logger.info(
+    `defineScope: rankings:\n${sorted.map((r) => `  [${r.importance}/5] ${r.filePath} — ${r.reasoning}`).join("\n")}`,
+  );
+
+  const importantFiles = sorted.filter((r) => r.importance >= MIN_FILE_IMPORTANCE).map((r) => r.filePath);
+  const skipped = solFiles.length - importantFiles.length;
+  if (skipped > 0) {
+    logger.info(`defineScope: skipping ${skipped} low-importance file(s) (importance < ${MIN_FILE_IMPORTANCE})`);
+  }
+
+  return { scope: importantFiles, docs: docFiles, fileTree, fileRankings: sorted };
 };
 
 const gatherContext: GraphNode<typeof AuditorState> = async (state) => {
@@ -85,99 +75,113 @@ const gatherContext: GraphNode<typeof AuditorState> = async (state) => {
     }
   };
 
-  // Read and analyze each Solidity file
   const solidityEntries: { filePath: string; source: string; analysis: string }[] = [];
   for (const filePath of state.scope) {
     const source = readFile(filePath).slice(0, MAX_SOL_CHARS);
     if (!source) continue;
-    const analysis = await analyzeSolidityFile(source, "full");
+
+    const ranking = state.fileRankings.find((r) => r.filePath === filePath);
+    const mode = ranking && ranking.importance >= 4 ? "full" : "short";
+    const analysis = await analyzeSolidityFile(source, mode, filePath, ranking?.importance);
     solidityEntries.push({ filePath, source, analysis });
   }
 
-  // Read documentation files
   const docEntries: { filePath: string; content: string }[] = [];
   for (const filePath of state.docs) {
     const content = readFile(filePath).slice(0, MAX_DOC_CHARS);
     if (content) docEntries.push({ filePath, content });
   }
 
-  // Build the LLM input
   const parts: string[] = [];
 
   if (docEntries.length > 0) {
-    parts.push("## Documentation\n");
+    parts.push("## Documentação\n");
     for (const { filePath, content } of docEntries) {
       parts.push(`### ${filePath}\n${content}`);
     }
   }
 
-  parts.push("## Structural Analysis (auto-generated)\n");
-  for (const { filePath, analysis } of solidityEntries) {
-    parts.push(`### ${filePath}\n${analysis}`);
+  parts.push(`## Árvore de Arquivos\n\n\`\`\`\n${state.fileTree}\n\`\`\``);
+
+  parts.push("## Análise Estrutural\n");
+  for (const { analysis } of solidityEntries) {
+    parts.push(analysis);
   }
 
-  parts.push("## Contract Source Code\n");
-  for (const { filePath, source } of solidityEntries) {
-    parts.push(`### ${filePath}\n\`\`\`solidity\n${source}\n\`\`\``);
-  }
+  const model = llmHaiku.withStructuredOutput(z.object({ context: z.string() }));
+  const result = await model.invoke([
+    new SystemMessage({
+      content: [{ type: "text", text: GATHER_CONTEXT_PROMPT, cache_control: { type: "ephemeral" } }],
+    }),
+    new HumanMessage(parts.join("\n\n")),
+  ]);
 
-  const model = llm.withStructuredOutput(z.object({ context: z.string() }));
-  const result = await model.invoke([new SystemMessage(GATHER_CONTEXT_PROMPT), new HumanMessage(parts.join("\n\n"))]);
+  const fileTreeBlock = `## Árvore de Arquivos\n\n\`\`\`\n${state.fileTree}\n\`\`\``;
+  const structuralBlock = `## Análise Estrutural dos Contratos\n\n${solidityEntries.map(({ analysis }) => analysis).join("\n\n---\n\n")}`;
+  const repoContext = [result.context, fileTreeBlock, structuralBlock].join("\n\n");
 
-  logger.info(`gatherContext: context built (${parts.join("\n\n").length} chars)`);
   logger.debug(`gatherContext: full context:\n${parts.join("\n\n")}`);
+  logger.info(`gatherContext: context built (${repoContext.length} chars)`);
+  logger.debug(`gatherContext: compact context:\n${repoContext}`);
 
-  return { repoContext: result.context };
+  return { repoContext };
 };
 
 const findVulnerabilities: GraphNode<typeof AuditorState> = async (state) => {
-  const model = llm.withStructuredOutput(z.object({ findings: z.array(CandidateFindingSchema) }));
+  const model = llmOpus.withStructuredOutput(z.object({ findings: z.array(CandidateFindingSchema) }));
 
-  const previousFeedback =
-    state.judgeReviews.length > 0
-      ? state.judgeReviews
-          .map((r, i) => {
-            const title = state.candidateFindings[i]?.title ?? `Finding ${i + 1}`;
-            return `- "${title}": ${r.isFalsePositive ? "FALSE POSITIVE" : "TRUE POSITIVE"}\n  Judge: ${r.review}`;
-          })
-          .join("\n")
-      : null;
+  const isReflection = state.judgeReviews.length > 0;
 
   logger.info(
     `findVulnerabilities: invoking LLM for ${state.scope.length} file(s) in parallel (iteration ${state.reflectionCount + 1})`,
   );
 
-  const allFindings = await Promise.all(
-    state.scope.map(async (filePath) => {
-      let source: string;
-      try {
-        source = fs.readFileSync(filePath, "utf-8").slice(0, MAX_SOL_CHARS);
-      } catch {
-        return [];
-      }
-      if (!source) return [];
+  const cachedContext = {
+    type: "text" as const,
+    text: `Contexto do Protocolo:\n${state.repoContext}`,
+    cache_control: { type: "ephemeral" as const },
+  };
 
-      let userMessage = `Contract (${filePath}):\n\n${source}\n\nProtocol Context:\n${state.repoContext}`;
-      if (previousFeedback) {
-        userMessage += `\n\nJudge feedback from previous iteration (iteration ${state.reflectionCount}):\n${previousFeedback}\n\nRevise your findings accordingly.`;
-      }
+  const processFile = async (filePath: string) => {
+    let source: string;
+    try {
+      source = fs.readFileSync(filePath, "utf-8").slice(0, MAX_SOL_CHARS);
+    } catch {
+      return [];
+    }
+    if (!source) return [];
 
-      logger.debug(`findVulnerabilities: processing ${filePath}`);
+    const fileEntries = isReflection
+      ? state.candidateFindings
+          .map((f, i) => ({ finding: f, review: state.judgeReviews[i] }))
+          .filter(({ finding }) => finding.path === filePath)
+      : [];
 
-      const result = await model.invoke([
-        new SystemMessage(FIND_VULNERABILITIES_PROMPT),
-        new HumanMessage(userMessage),
-      ]);
+    const isRefinement = fileEntries.length > 0;
+    const promptText = isRefinement ? REFINE_VULNERABILITIES_PROMPT : FIND_VULNERABILITIES_PROMPT;
+    const contractText = isRefinement
+      ? `Contrato (${filePath}):\n\n${source}\n\n${buildReviewBlocks(fileEntries, state.reflectionCount)}`
+      : `Contrato (${filePath}):\n\n${source}`;
 
-      return result.findings.map((finding: any) => ({
-        ...finding,
-        path: filePath,
-        location: matchLines(source, finding.codeSnippet) ?? "",
-      }));
-    }),
-  );
+    logger.debug(`findVulnerabilities: processing ${filePath}`);
 
-  const candidateFindings = allFindings.flat();
+    const result = await model.invoke([
+      new SystemMessage({ content: [{ type: "text", text: promptText, cache_control: { type: "ephemeral" } }] }),
+      new HumanMessage({ content: [cachedContext, { type: "text", text: contractText }] }),
+    ]);
+
+    return result.findings.map((finding: any) => ({
+      ...finding,
+      path: filePath,
+      location: matchLines(source, finding.codeSnippet) ?? "",
+    }));
+  };
+
+  const [firstFile, ...restFiles] = state.scope;
+  const firstFindings = firstFile ? await processFile(firstFile) : [];
+  const restFindings = await Promise.all(restFiles.map(processFile));
+  const candidateFindings = [firstFindings, ...restFindings].flat();
+
   logger.info(`findVulnerabilities: LLM returned ${candidateFindings.length} total candidate finding(s)`);
   logger.debug(`findVulnerabilities: findings:\n${JSON.stringify(candidateFindings, null, 2)}`);
 
@@ -194,30 +198,44 @@ const judgeFindings: GraphNode<typeof AuditorState> = async (state) => {
     };
   }
 
-  const model = llm.withStructuredOutput(JudgeReviewSchema);
+  const model = llmSonnet.withStructuredOutput(JudgeReviewSchema);
 
   logger.info(`judgeFindings: reviewing ${state.candidateFindings.length} candidate finding(s) in parallel`);
 
-  const reviews = await Promise.all(
-    state.candidateFindings.map(async (finding, i) => {
-      let source: string;
-      try {
-        source = fs.readFileSync(finding.path, "utf-8").slice(0, MAX_SOL_CHARS);
-      } catch {
-        source = "";
-      }
+  const cachedContext = {
+    type: "text" as const,
+    text: `Contexto do Protocolo:\n${state.repoContext}`,
+    cache_control: { type: "ephemeral" as const },
+  };
 
-      const findingText = `[Finding ${i + 1}] ${finding.title}\nSeverity: ${finding.severity}\nDescription: ${finding.description}\nLocation: ${finding.path} lines ${finding.location}\nCode:\n\`\`\`solidity\n${finding.codeSnippet}\n\`\`\``;
+  const reviewFinding = async (finding: (typeof state.candidateFindings)[number], i: number) => {
+    let source: string;
+    try {
+      source = fs.readFileSync(finding.path, "utf-8").slice(0, MAX_SOL_CHARS);
+    } catch {
+      source = "";
+    }
 
-      logger.debug(`judgeFindings: reviewing finding ${i + 1}: ${finding.title}`);
-      return model.invoke([
-        new SystemMessage(JUDGE_FINDINGS_PROMPT),
-        new HumanMessage(
-          `Contract (${finding.path}):\n\n${source}\n\nProtocol Context:\n${state.repoContext}\n\nFinding to Review:\n\n${findingText}`,
-        ),
-      ]);
-    }),
-  );
+    const findingText = `[Achado ${i + 1}] ${finding.title}\nSeveridade: ${finding.severity}\nDescrição: ${finding.description}\nLocalização: ${finding.path} linhas ${finding.location}\nCódigo:\n\`\`\`solidity\n${finding.codeSnippet}\n\`\`\``;
+
+    logger.debug(`judgeFindings: reviewing finding ${i + 1}: ${finding.title}`);
+    return model.invoke([
+      new SystemMessage({
+        content: [{ type: "text", text: JUDGE_FINDINGS_PROMPT, cache_control: { type: "ephemeral" } }],
+      }),
+      new HumanMessage({
+        content: [
+          cachedContext,
+          { type: "text", text: `Contrato (${finding.path}):\n\n${source}\n\nAchado para Revisão:\n\n${findingText}` },
+        ],
+      }),
+    ]);
+  };
+
+  const [firstFinding, ...restFindings] = state.candidateFindings;
+  const firstReview = await reviewFinding(firstFinding, 0);
+  const restReviews = await Promise.all(restFindings.map((f, i) => reviewFinding(f, i + 1)));
+  const reviews = [firstReview, ...restReviews];
 
   const confirmedEntries = state.candidateFindings
     .map((finding, i) => ({ finding, review: reviews[i] }))
