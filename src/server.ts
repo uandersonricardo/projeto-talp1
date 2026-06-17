@@ -13,6 +13,7 @@ import { coderAgent } from "./agents/coder/agent.ts";
 import { auditorAgent } from "./agents/auditor/agent.ts";
 import { testerAgent } from "./agents/tester/agent.ts";
 import { mapFindingToReport } from "./utils/mapFinding.js";
+import { logger, setLogSink, clearLogSink, setStepSink, clearStepSink } from "./logger.ts";
 
 const app = new Hono();
 
@@ -35,16 +36,17 @@ app.post("/api/run", (c) => {
     };
 
     try {
+      setLogSink((msg) => send("log", msg));
+      setStepSink((event) => send("step", JSON.stringify(event)));
+
       // === CODER ===
-      await send("log", "[Coder] Gerando smart contract a partir dos requisitos...");
+      logger.info("[Coder] Gerando smart contract a partir dos requisitos...");
       const coderResult = await coderAgent.invoke({ requirements: [requirements] });
 
-      await send("log", "[Coder] Contrato gerado com sucesso.");
-
       if (coderResult.compilationErrors.length > 0) {
-        await send("log", `[Coder] Erros de compilação restantes: ${coderResult.compilationErrors.length}`);
+        logger.info(`[Coder] Erros de compilação restantes: ${coderResult.compilationErrors.length}`);
       } else {
-        await send("log", "[Coder] Contrato compilado sem erros.");
+        logger.info("[Coder] Contrato compilado sem erros.");
       }
 
       await send(
@@ -62,11 +64,11 @@ app.post("/api/run", (c) => {
       writeFileSync(resolve(outputDir, "Contract.sol"), coderResult.contract, "utf-8");
       writeFileSync(resolve(outputDir, "README.md"), requirements, "utf-8");
 
-      await send("log", "[Auditor] Iniciando auditoria de segurança...");
+      logger.info("[Auditor] Iniciando auditoria de segurança...");
       const auditorResult = await auditorAgent.invoke({ repoPath: outputDir });
-      await send("log", `[Auditor] ${auditorResult.findings.length} vulnerabilidade(s) encontrada(s).`);
+      logger.info(`[Auditor] ${auditorResult.findings.length} vulnerabilidade(s) encontrada(s).`);
       for (const f of auditorResult.findings) {
-        await send("log", `[Auditor] [${f.severity.toUpperCase()}] ${f.title} — ${f.location}`);
+        logger.info(`[Auditor] [${f.severity.toUpperCase()}] ${f.title} — ${f.location}`);
       }
 
       await send(
@@ -77,14 +79,14 @@ app.post("/api/run", (c) => {
       );
 
       // === TESTER ===
-      await send("log", "[Tester] Gerando testes de prova de conceito...");
+      logger.info("[Tester] Gerando testes de prova de conceito...");
 
       if (auditorResult.findings.length > 0) {
         const report = mapFindingToReport(auditorResult.findings[0], coderResult.contract);
         const testerResult = await testerAgent.invoke({ report });
 
-        await send("log", `[Tester] Execução concluída com status: ${testerResult.status}`);
-        
+        logger.info(`[Tester] Execução concluída com status: ${testerResult.status}`);
+
         // Garante que o objeto enviado tem exatamente o que o front espera
         await send(
           "tester",
@@ -96,15 +98,18 @@ app.post("/api/run", (c) => {
           }),
         );
       } else {
-        await send("log", "[Tester] Nenhuma vulnerabilidade para testar.");
+        logger.info("[Tester] Nenhuma vulnerabilidade para testar.");
         await send("tester", JSON.stringify({ status: "skipped", iterations: 0 }));
       }
 
-      await send("log", "Pipeline concluído.");
+      logger.info("Pipeline concluído.");
       await send("done", "ok");
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       await send("error", message);
+    } finally {
+      clearLogSink();
+      clearStepSink();
     }
   });
 });

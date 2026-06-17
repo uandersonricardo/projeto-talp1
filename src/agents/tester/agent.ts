@@ -1,25 +1,28 @@
-import "dotenv/config";
 import { StateGraph, END, START } from "@langchain/langgraph";
-import { PoCStateAnnotation, PoCState } from "./state.js";
+
+import { PoCStateAnnotation, type PoCState } from "./state.js";
 import { generateLocalScaffold } from "./tools/scaffoldGenerator.js";
-import { OracleContext } from "./types.js";
+import type { OracleContext } from "./types.js";
 import { createLLM } from "../../config/llm.ts";
 import { SYSTEM_PROMPT } from "./prompts/system.js";
 import { extractSolidity } from "./utils/extractSolidity.js";
 import { runFoundry } from "./tools/foundryRunner.js";
 import { analyzeFoundryLog } from "./utils/logAnalyzer.js";
+import { logger, emitStep } from "../../logger.ts";
 
 const MAX_ITERATIONS = 5;
 
 const llm = createLLM();
 
 async function oracleNode(state: PoCState): Promise<Partial<PoCState>> {
-  console.log("[oracleNode] gerando scaffold para:", state.report.title);
+  emitStep({ agent: "tester", step: "oracle", status: "running" });
+  logger.info(`[Tester] oracleNode: gerando scaffold para: ${state.report.title}`);
 
   const solidityScaffold = generateLocalScaffold(state.report);
   const oracleContext: OracleContext = { solidityScaffold };
 
-  console.log("[oracleNode] scaffold gerado, tamanho:", solidityScaffold.length, "chars");
+  logger.info(`[Tester] oracleNode: scaffold gerado, tamanho: ${solidityScaffold.length} chars`);
+  emitStep({ agent: "tester", step: "oracle", status: "done" });
   return { oracleContext };
 }
 
@@ -53,7 +56,8 @@ Scaffold (complete APENAS test_Exploit):
 ${oracleContext!.solidityScaffold}
 \`\`\``;
 
-  console.log(`[testerAgent] generatePoCNode iteração ${iterations + 1}, isRetry=${isRetry}`);
+  logger.info(`[Tester] generatePoCNode: iteração ${iterations + 1}, isRetry=${isRetry}`);
+  emitStep({ agent: "tester", step: "gen", status: "running", detail: `iter ${iterations + 1}` });
 
   try {
     const response = await llm.invoke([
@@ -61,16 +65,19 @@ ${oracleContext!.solidityScaffold}
       { role: "user", content: userMessage },
     ]);
     const solidityCode = extractSolidity(response.content as string);
-    console.log("[testerAgent] Solidity extraído, tamanho:", solidityCode.length);
+    logger.info(`[Tester] generatePoCNode: Solidity extraído, tamanho: ${solidityCode.length}`);
+    emitStep({ agent: "tester", step: "gen", status: "done" });
     return { pocCode: solidityCode, iterations: 1 };
   } catch (err) {
-    console.error("[testerAgent] falha na geração:", (err as Error).message);
+    logger.error(`[Tester] generatePoCNode: falha na geração: ${(err as Error).message}`);
+    emitStep({ agent: "tester", step: "gen", status: "error" });
     return { iterations: 1, lastError: `Erro na geração/extração: ${(err as Error).message}` };
   }
 }
 
 async function runFoundryNode(state: PoCState): Promise<Partial<PoCState>> {
-  console.log("[testerAgent] Executando runFoundryNode...");
+  emitStep({ agent: "tester", step: "run", status: "running" });
+  logger.info("[Tester] runFoundryNode: executando...");
 
   const trimmedCode = state.pocCode.trim();
   const isMissingCode = trimmedCode.length === 0;
@@ -78,14 +85,15 @@ async function runFoundryNode(state: PoCState): Promise<Partial<PoCState>> {
   const isMissingTest = !trimmedCode.includes("function test_Exploit()");
   const isPlaceholder = trimmedCode.includes("TODO: implementar exploit");
   if (isMissingCode || isMissingContract || isMissingTest || isPlaceholder) {
-    const summary = state.lastError ?? (isMissingCode
-      ? "Código Solidity ausente. O LLM não retornou o arquivo do exploit."
-      : isMissingContract
-        ? "Contrato ExploitTest não encontrado no arquivo."
-        : isMissingTest
-          ? "Função test_Exploit() não encontrada no arquivo."
-          : "Exploit não implementado (placeholder TODO ainda presente)."
-    );
+    const summary =
+      state.lastError ??
+      (isMissingCode
+        ? "Código Solidity ausente. O LLM não retornou o arquivo do exploit."
+        : isMissingContract
+          ? "Contrato ExploitTest não encontrado no arquivo."
+          : isMissingTest
+            ? "Função test_Exploit() não encontrada no arquivo."
+            : "Exploit não implementado (placeholder TODO ainda presente).");
     const status = state.iterations >= MAX_ITERATIONS ? "failed" : "running";
     return {
       executionLogs: [summary],
@@ -94,51 +102,52 @@ async function runFoundryNode(state: PoCState): Promise<Partial<PoCState>> {
     };
   }
 
-  const result   = await runFoundry(state.pocCode);
+  const result = await runFoundry(state.pocCode);
   const analysis = analyzeFoundryLog(result);
   const noTestsFound = result.combined.includes("No tests found");
   const summary = noTestsFound
     ? "Forge não encontrou nenhum teste. Verifique se o contrato se chama ExploitTest e se existe test_Exploit()."
     : analysis.summary;
-  const passed   = result.exitCode === 0 && result.stdout.includes("ok") && !noTestsFound;
+  const passed = result.exitCode === 0 && result.stdout.includes("ok") && !noTestsFound;
   const isLastAttempt = state.iterations >= MAX_ITERATIONS;
 
-  const status = passed
-    ? "success"
-    : result.timedOut
-      ? "timeout"
-      : isLastAttempt
-        ? "failed"
-        : "running";
+  const status = passed ? "success" : result.timedOut ? "timeout" : isLastAttempt ? "failed" : "running";
 
-  console.log(`[testerAgent] Resultado Foundry: exitCode=${result.exitCode}, passed=${passed}`);
+  logger.info(`[Tester] runFoundryNode: resultado Foundry: exitCode=${result.exitCode}, passed=${passed}`);
   if (!passed) {
-    console.log(`[testerAgent] Falha detectada: ${analysis.summary}`);
+    logger.info(`[Tester] runFoundryNode: falha detectada: ${analysis.summary}`);
   }
 
+  emitStep({ agent: "tester", step: "run", status: passed ? "done" : result.timedOut ? "error" : "done" });
+
   return {
-    executionLogs: [result.combined],   // reducer append
+    executionLogs: [result.combined], // reducer append
     lastError: summary,
     status,
   };
 }
 
 async function reflectNode(state: PoCState): Promise<Partial<PoCState>> {
+  emitStep({ agent: "tester", step: "reflect", status: "running" });
   const lastLog = state.executionLogs[state.executionLogs.length - 1];
   if (!lastLog) {
     return { lastError: "Sem logs disponíveis para análise." };
   }
 
   const mockResult = {
-    exitCode: 1, timedOut: lastLog.includes("TIMEOUT"),
-    stdout: "", stderr: "", combined: lastLog,
+    exitCode: 1,
+    timedOut: lastLog.includes("TIMEOUT"),
+    stdout: "",
+    stderr: "",
+    combined: lastLog,
   };
 
   const analysis = analyzeFoundryLog(mockResult as any);
 
-  console.log(`[reflectNode] categoria: ${analysis.category}`);
-  console.log(`[reflectNode] resumo: ${analysis.summary}`);
+  logger.info(`[Tester] reflectNode: categoria: ${analysis.category}`);
+  logger.info(`[Tester] reflectNode: resumo: ${analysis.summary}`);
 
+  emitStep({ agent: "tester", step: "reflect", status: "done" });
   return {
     lastError: `[${analysis.category.toUpperCase()}] ${analysis.summary}\n\nLinhas relevantes:\n${analysis.relevantLines.join("\n")}`,
   };

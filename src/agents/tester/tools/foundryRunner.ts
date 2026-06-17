@@ -3,7 +3,9 @@ import { promisify } from "util";
 import { writeFile, access } from "fs/promises";
 import { join } from "path";
 
-const execAsync  = promisify(exec);
+import { logger } from "../../../logger.js";
+
+const execAsync = promisify(exec);
 const SANDBOX = process.env.SANDBOX_DIR || "/tmp/poc-sandbox";
 const TIMEOUT_MS = 60_000;
 
@@ -22,7 +24,7 @@ async function ensureSandbox() {
   try {
     await access(join(SANDBOX, "foundry.toml"));
   } catch {
-    console.log("[foundryRunner] Sandbox não encontrado. Inicializando...");
+    logger.info("[Tester] foundryRunner: sandbox não encontrado, inicializando...");
     // Caminho absoluto para o script de setup (assume execução da raiz do projeto)
     await execAsync("./scripts/setup-sandbox.sh");
   }
@@ -30,19 +32,16 @@ async function ensureSandbox() {
 
 export async function runFoundry(solidityCode: string): Promise<FoundryResult> {
   await ensureSandbox();
-  
+
   // Escrever o arquivo no sandbox
   await writeFile(`${SANDBOX}/test/Exploit.t.sol`, solidityCode, "utf-8");
 
   try {
-    const { stdout, stderr } = await execAsync(
-      "forge test --match-contract ExploitTest -vvvv",
-      { 
-        cwd: SANDBOX, 
-        timeout: TIMEOUT_MS, 
-        env: { ...process.env, PATH: `${process.env.HOME}/.foundry/bin:${process.env.PATH}` } 
-      }
-    );
+    const { stdout, stderr } = await execAsync("forge test --match-contract ExploitTest -vvvv", {
+      cwd: SANDBOX,
+      timeout: TIMEOUT_MS,
+      env: { ...process.env, PATH: `${process.env.HOME}/.foundry/bin:${process.env.PATH}` },
+    });
     return {
       exitCode: 0,
       stdout,
@@ -53,7 +52,9 @@ export async function runFoundry(solidityCode: string): Promise<FoundryResult> {
   } catch (err: any) {
     if (err.killed || err.signal === "SIGTERM") {
       return {
-        exitCode: -1, stdout: "", stderr: "Forge timed out",
+        exitCode: -1,
+        stdout: "",
+        stderr: "Forge timed out",
         combined: `TIMEOUT após ${TIMEOUT_MS / 1000}s`,
         timedOut: true,
       };
