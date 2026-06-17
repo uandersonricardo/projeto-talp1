@@ -385,13 +385,11 @@ const renderContractFull = (contract: ContractAnalysis, imports: string[], lines
     lines.push("");
   }
 
-  lines.push("## Errors");
-  if (contract.errors.length === 0) {
-    lines.push("- None");
-  } else {
+  if (contract.errors.length > 0) {
+    lines.push("## Errors");
     for (const e of contract.errors) lines.push(`- \`${e.name}(${e.params.join(", ")})\``);
+    lines.push("");
   }
-  lines.push("");
 
   if (contract.modifiers.length > 0) {
     lines.push("## Modifiers");

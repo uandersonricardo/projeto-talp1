@@ -34,13 +34,13 @@ Apenas os caminhos críticos ponta a ponta que movem valor ou alteram estado rel
 Formato por passo: \`ação (função) → efeito colateral → variável/estado alterado\`.
 Inclua chamadas cross-contract quando materiais para entender superfície de ataque.
 
-## Invariantes e Propriedades de Segurança
+## Invariantes e Propriedades
 Condições que devem ser verdadeiras para o protocolo operar corretamente, derivadas APENAS de \`require\`/\`assert\`/\`revert\` explícitos no código, NatSpec \`@dev\`, ou comentários que as declarem literalmente. Separe em dois grupos:
-- **Contábeis**: balanços, totais, proporções (ex.: \`totalDebt == Σ userDebt[i]\`, \`reservas >= totalSupply * exchangeRate\`)
+- **Econômicas**: balanços, totais, proporções (ex.: \`totalDebt == Σ userDebt[i]\`, \`reservas >= totalSupply * exchangeRate\`)
 - **De controle**: acesso, sequência de operações, transições de estado permitidas
 
 ## Trust Assumptions
-⚠ **SOMENTE o que estiver EXPLICITAMENTE declarado** em código-fonte (require, NatSpec, comentários inline) ou na documentação. **NÃO inferir. NÃO supor. NÃO extrapolar.** Se não há declaração explícita sobre confiança em um componente externo ou comportamento esperado, ele NÃO entra nesta seção — mesmo que pareça óbvio.
+**SOMENTE o que estiver EXPLICITAMENTE declarado** em código-fonte (require, NatSpec, comentários inline) ou na documentação. **NÃO inferir. NÃO supor. NÃO extrapolar.** Se não há declaração explícita sobre confiança em um componente externo ou comportamento esperado, ele NÃO entra nesta seção — mesmo que pareça óbvio.
 Bullets curtos com referência à fonte (ex.: "owner pode pausar o contrato — \`onlyOwner\` em \`pause()\`").
 
 ## Regras de Negócio e Restrições de Segurança
@@ -64,7 +64,7 @@ Além das categorias técnicas listadas abaixo, sua análise deve cobrir:
 
 ## Categorias técnicas a verificar sistematicamente
 
-Reentrância (simples, cross-function, cross-contract, read-only), controle de acesso (funções privilegiadas desprotegidas, erros em herança de roles), overflow/underflow (Solidity <0.8 ou uso de \`unchecked\`), manipulação de oráculo (TWAP curto, preço spot, valor de reserves), ataques de flash loan (price impact, liquidações artificiais), front-running e MEV (sandwich, race condition em aprovações), replay de assinatura (nonce ausente, falta de chainId), colisões de storage (proxies, delegatecall), proxies não inicializados (initializer sem proteção), delegatecall inseguro (destino controlável pelo usuário), griefing de gas (loops ilimitados, arrays crescentes), negação de serviço (push payments, dependência de chamada externa), perda de precisão (divisão antes de multiplicação, truncamento acumulativo), lógica de negócio (violação de invariantes, casos de borda em math financeira, race conditions de estado), eficiência de gas, boas práticas.
+Reentrância (simples, cross-function, cross-contract, read-only), controle de acesso (funções privilegiadas desprotegidas, erros em herança de roles), overflow/underflow (Solidity <0.8 ou uso de \`unchecked\`), manipulação de oráculo (TWAP curto, preço spot, valor de reserves), ataques de flash loan (price impact, liquidações artificiais), front-running e MEV (sandwich, race condition em aprovações), replay de assinatura (nonce ausente, falta de chainId), colisões de storage (proxies, delegatecall), proxies não inicializados (initializer sem proteção), delegatecall inseguro (destino controlável pelo usuário), griefing de gas (loops ilimitados, arrays crescentes), negação de serviço (push payments, dependência de chamada externa), perda de precisão (divisão antes de multiplicação, truncamento acumulativo), lógica de negócio (violação de invariantes, casos de borda em math financeira, race conditions de estado).
 
 ## Formato de saída
 
@@ -114,14 +114,14 @@ Para cada achado, forneça OBRIGATORIAMENTE todos os campos abaixo:
 - **review**: Análise técnica detalhada (3 a 6 frases) explicando o veredicto. Referencie: (a) o código específico envolvido, (b) invariantes ou premissas do protocolo que confirmam ou bloqueiam o exploit, (c) pré-condições necessárias para exploração, (d) controles mitigadores existentes que o auditor pode ter ignorado. Seja preciso — cite nomes de funções, variáveis e valores.
 - **isFalsePositive**: \`true\` se o achado NÃO for explorável na prática; \`false\` se for uma vulnerabilidade real.
 - **confidence**: Inteiro de 0 a 100 refletindo sua certeza no veredicto. Use < 60 apenas quando existir ambiguidade genuína no código.
-- **exploitablePaths**: Array de strings.
+- **exploitablePaths**: Retorne uma array de strings.
   - Se verdadeiro positivo (\`isFalsePositive: false\`): forneça 1 a 3 caminhos concretos de exploit, cada um com passos numerados, entradas realistas e estado do contrato antes/depois. Ex.: ["1. Atacante chama flashLoan(500k USDC). 2. No callback, chama deposit() inflando reserves. 3. Chama withdraw() com preço manipulado. 4. Lucra 50k USDC. Estado: reserves inflado temporariamente, totalShares inalterado."].
   - Se falso positivo (\`isFalsePositive: true\`): forneça o raciocínio exato que bloqueia cada caminho de exploit tentado pelo auditor.
 
 ## Critérios para falso positivo (aplique com rigor — não seja permissivo)
 
 1. O caminho de exploit é bloqueado por controle de acesso verificável no código.
-2. A vulnerabilidade já é totalmente mitigada por outro mecanismo no código (ex.: nonReentrant, require com validação suficiente).
+2. A vulnerabilidade já é totalmente mitigada por outro mecanismo no código (ex.: nonReentrant, onlyOwner, require com validação suficiente).
 3. A condição necessária para o exploit é impossível ou economicamente inviável dado o modelo do protocolo (ex.: requer ser o próprio contrato, ou lucro < custo de gas em qualquer cenário realista).
 4. O comportamento é explicitamente documentado como intencional nas premissas de design do protocolo.
 

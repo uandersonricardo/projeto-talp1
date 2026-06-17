@@ -1,3 +1,38 @@
+import fs from "node:fs";
+import path from "node:path";
+
+import { DOC_BASENAMES, DOC_EXTS, MAX_DEPTH, SKIP_DIRS, SOL_EXT, SOL_TEST_SUFFIXES } from "./config.ts";
+
+export const walkDirectory = (dir: string, depth: number, solFiles: string[], docFiles: string[]) => {
+  if (depth > MAX_DEPTH) return;
+
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+
+  for (const entry of entries) {
+    if (entry.isDirectory()) {
+      if (!SKIP_DIRS.has(entry.name)) {
+        walkDirectory(path.join(dir, entry.name), depth + 1, solFiles, docFiles);
+      }
+    } else if (entry.isFile()) {
+      const fullPath = path.join(dir, entry.name);
+      const ext = path.extname(entry.name).toLowerCase();
+      const base = path.basename(entry.name, ext).toLowerCase();
+
+      if (ext === SOL_EXT) {
+        const isTest = SOL_TEST_SUFFIXES.some((suffix) => entry.name.endsWith(suffix));
+        if (!isTest) solFiles.push(fullPath);
+      } else if (DOC_EXTS.has(ext) || DOC_BASENAMES.has(base)) {
+        docFiles.push(fullPath);
+      }
+    }
+  }
+};
+
 export const matchLines = (fileContent: string, codeSnippet: string): string | null => {
   const fileLines = fileContent.split("\n");
   const snippetLines = codeSnippet.split("\n").map((line) => line.trim());

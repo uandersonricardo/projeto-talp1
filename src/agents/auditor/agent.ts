@@ -1,5 +1,4 @@
 import fs from "node:fs";
-import path from "node:path";
 
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { END, type GraphNode, START, StateGraph } from "@langchain/langgraph";
@@ -7,18 +6,7 @@ import { z } from "zod";
 
 import { createLLM } from "../../config/llm.ts";
 import { logger } from "../../logger.ts";
-import {
-  DOC_BASENAMES,
-  DOC_EXTS,
-  MAX_DEPTH,
-  MAX_DOC_CHARS,
-  MAX_REFLECTIONS,
-  MAX_SOL_CHARS,
-  MIN_FILE_IMPORTANCE,
-  SKIP_DIRS,
-  SOL_EXT,
-  SOL_TEST_SUFFIXES,
-} from "./config.ts";
+import { MAX_DOC_CHARS, MAX_REFLECTIONS, MAX_SOL_CHARS, MIN_FILE_IMPORTANCE } from "./config.ts";
 import {
   FIND_VULNERABILITIES_PROMPT,
   GATHER_CONTEXT_PROMPT,
@@ -29,41 +17,11 @@ import {
 import { AuditorState, CandidateFindingSchema, FileRankingSchema, JudgeReviewSchema } from "./state.ts";
 import { buildRepoTree } from "./tools/repo-tree/tool.ts";
 import { analyzeSolidityFile } from "./tools/solidity-analyzer/tool.ts";
-import { buildReviewBlocks, matchLines } from "./utils.ts";
+import { buildReviewBlocks, matchLines, walkDirectory } from "./utils.ts";
 
 const llmHaiku = createLLM("anthropic", { model: "claude-haiku-4-5", maxTokens: 20000 });
 const llmOpus = createLLM("anthropic", { model: "claude-opus-4-8", temperature: null, maxTokens: 20000 });
 const llmSonnet = createLLM("anthropic", { model: "claude-sonnet-4-6", maxTokens: 20000 });
-
-const walkDirectory = (dir: string, depth: number, solFiles: string[], docFiles: string[]) => {
-  if (depth > MAX_DEPTH) return;
-
-  let entries: fs.Dirent[];
-  try {
-    entries = fs.readdirSync(dir, { withFileTypes: true });
-  } catch {
-    return;
-  }
-
-  for (const entry of entries) {
-    if (entry.isDirectory()) {
-      if (!SKIP_DIRS.has(entry.name)) {
-        walkDirectory(path.join(dir, entry.name), depth + 1, solFiles, docFiles);
-      }
-    } else if (entry.isFile()) {
-      const fullPath = path.join(dir, entry.name);
-      const ext = path.extname(entry.name).toLowerCase();
-      const base = path.basename(entry.name, ext).toLowerCase();
-
-      if (ext === SOL_EXT) {
-        const isTest = SOL_TEST_SUFFIXES.some((suffix) => entry.name.endsWith(suffix));
-        if (!isTest) solFiles.push(fullPath);
-      } else if (DOC_EXTS.has(ext) || DOC_BASENAMES.has(base)) {
-        docFiles.push(fullPath);
-      }
-    }
-  }
-};
 
 const defineScope: GraphNode<typeof AuditorState> = async (state) => {
   logger.info(`defineScope: walking repo at ${state.repoPath}`);
@@ -152,7 +110,9 @@ const gatherContext: GraphNode<typeof AuditorState> = async (state) => {
 
   const model = llmHaiku.withStructuredOutput(z.object({ context: z.string() }));
   const result = await model.invoke([
-    new SystemMessage({ content: [{ type: "text", text: GATHER_CONTEXT_PROMPT, cache_control: { type: "ephemeral" } }] }),
+    new SystemMessage({
+      content: [{ type: "text", text: GATHER_CONTEXT_PROMPT, cache_control: { type: "ephemeral" } }],
+    }),
     new HumanMessage(parts.join("\n\n")),
   ]);
 
@@ -176,46 +136,52 @@ const findVulnerabilities: GraphNode<typeof AuditorState> = async (state) => {
     `findVulnerabilities: invoking LLM for ${state.scope.length} file(s) in parallel (iteration ${state.reflectionCount + 1})`,
   );
 
-  const cachedContext = { type: "text" as const, text: `Contexto do Protocolo:\n${state.repoContext}`, cache_control: { type: "ephemeral" as const } };
+  const cachedContext = {
+    type: "text" as const,
+    text: `Contexto do Protocolo:\n${state.repoContext}`,
+    cache_control: { type: "ephemeral" as const },
+  };
 
-  const allFindings = await Promise.all(
-    state.scope.map(async (filePath) => {
-      let source: string;
-      try {
-        source = fs.readFileSync(filePath, "utf-8").slice(0, MAX_SOL_CHARS);
-      } catch {
-        return [];
-      }
-      if (!source) return [];
+  const processFile = async (filePath: string) => {
+    let source: string;
+    try {
+      source = fs.readFileSync(filePath, "utf-8").slice(0, MAX_SOL_CHARS);
+    } catch {
+      return [];
+    }
+    if (!source) return [];
 
-      const fileEntries = isReflection
-        ? state.candidateFindings
-            .map((f, i) => ({ finding: f, review: state.judgeReviews[i] }))
-            .filter(({ finding }) => finding.path === filePath)
-        : [];
+    const fileEntries = isReflection
+      ? state.candidateFindings
+          .map((f, i) => ({ finding: f, review: state.judgeReviews[i] }))
+          .filter(({ finding }) => finding.path === filePath)
+      : [];
 
-      const isRefinement = fileEntries.length > 0;
-      const promptText = isRefinement ? REFINE_VULNERABILITIES_PROMPT : FIND_VULNERABILITIES_PROMPT;
-      const contractText = isRefinement
-        ? `Contrato (${filePath}):\n\n${source}\n\n${buildReviewBlocks(fileEntries, state.reflectionCount)}`
-        : `Contrato (${filePath}):\n\n${source}`;
+    const isRefinement = fileEntries.length > 0;
+    const promptText = isRefinement ? REFINE_VULNERABILITIES_PROMPT : FIND_VULNERABILITIES_PROMPT;
+    const contractText = isRefinement
+      ? `Contrato (${filePath}):\n\n${source}\n\n${buildReviewBlocks(fileEntries, state.reflectionCount)}`
+      : `Contrato (${filePath}):\n\n${source}`;
 
-      logger.debug(`findVulnerabilities: processing ${filePath}`);
+    logger.debug(`findVulnerabilities: processing ${filePath}`);
 
-      const result = await model.invoke([
-        new SystemMessage({ content: [{ type: "text", text: promptText, cache_control: { type: "ephemeral" } }] }),
-        new HumanMessage({ content: [cachedContext, { type: "text", text: contractText }] }),
-      ]);
+    const result = await model.invoke([
+      new SystemMessage({ content: [{ type: "text", text: promptText, cache_control: { type: "ephemeral" } }] }),
+      new HumanMessage({ content: [cachedContext, { type: "text", text: contractText }] }),
+    ]);
 
-      return result.findings.map((finding: any) => ({
-        ...finding,
-        path: filePath,
-        location: matchLines(source, finding.codeSnippet) ?? "",
-      }));
-    }),
-  );
+    return result.findings.map((finding: any) => ({
+      ...finding,
+      path: filePath,
+      location: matchLines(source, finding.codeSnippet) ?? "",
+    }));
+  };
 
-  const candidateFindings = allFindings.flat();
+  const [firstFile, ...restFiles] = state.scope;
+  const firstFindings = firstFile ? await processFile(firstFile) : [];
+  const restFindings = await Promise.all(restFiles.map(processFile));
+  const candidateFindings = [firstFindings, ...restFindings].flat();
+
   logger.info(`findVulnerabilities: LLM returned ${candidateFindings.length} total candidate finding(s)`);
   logger.debug(`findVulnerabilities: findings:\n${JSON.stringify(candidateFindings, null, 2)}`);
 
@@ -236,31 +202,40 @@ const judgeFindings: GraphNode<typeof AuditorState> = async (state) => {
 
   logger.info(`judgeFindings: reviewing ${state.candidateFindings.length} candidate finding(s) in parallel`);
 
-  const cachedContext = { type: "text" as const, text: `Contexto do Protocolo:\n${state.repoContext}`, cache_control: { type: "ephemeral" as const } };
+  const cachedContext = {
+    type: "text" as const,
+    text: `Contexto do Protocolo:\n${state.repoContext}`,
+    cache_control: { type: "ephemeral" as const },
+  };
 
-  const reviews = await Promise.all(
-    state.candidateFindings.map(async (finding, i) => {
-      let source: string;
-      try {
-        source = fs.readFileSync(finding.path, "utf-8").slice(0, MAX_SOL_CHARS);
-      } catch {
-        source = "";
-      }
+  const reviewFinding = async (finding: (typeof state.candidateFindings)[number], i: number) => {
+    let source: string;
+    try {
+      source = fs.readFileSync(finding.path, "utf-8").slice(0, MAX_SOL_CHARS);
+    } catch {
+      source = "";
+    }
 
-      const findingText = `[Achado ${i + 1}] ${finding.title}\nSeveridade: ${finding.severity}\nDescrição: ${finding.description}\nLocalização: ${finding.path} linhas ${finding.location}\nCódigo:\n\`\`\`solidity\n${finding.codeSnippet}\n\`\`\``;
+    const findingText = `[Achado ${i + 1}] ${finding.title}\nSeveridade: ${finding.severity}\nDescrição: ${finding.description}\nLocalização: ${finding.path} linhas ${finding.location}\nCódigo:\n\`\`\`solidity\n${finding.codeSnippet}\n\`\`\``;
 
-      logger.debug(`judgeFindings: reviewing finding ${i + 1}: ${finding.title}`);
-      return model.invoke([
-        new SystemMessage({ content: [{ type: "text", text: JUDGE_FINDINGS_PROMPT, cache_control: { type: "ephemeral" } }] }),
-        new HumanMessage({
-          content: [
-            cachedContext,
-            { type: "text", text: `Contrato (${finding.path}):\n\n${source}\n\nAchado para Revisão:\n\n${findingText}` },
-          ],
-        }),
-      ]);
-    }),
-  );
+    logger.debug(`judgeFindings: reviewing finding ${i + 1}: ${finding.title}`);
+    return model.invoke([
+      new SystemMessage({
+        content: [{ type: "text", text: JUDGE_FINDINGS_PROMPT, cache_control: { type: "ephemeral" } }],
+      }),
+      new HumanMessage({
+        content: [
+          cachedContext,
+          { type: "text", text: `Contrato (${finding.path}):\n\n${source}\n\nAchado para Revisão:\n\n${findingText}` },
+        ],
+      }),
+    ]);
+  };
+
+  const [firstFinding, ...restFindings] = state.candidateFindings;
+  const firstReview = await reviewFinding(firstFinding, 0);
+  const restReviews = await Promise.all(restFindings.map((f, i) => reviewFinding(f, i + 1)));
+  const reviews = [firstReview, ...restReviews];
 
   const confirmedEntries = state.candidateFindings
     .map((finding, i) => ({ finding, review: reviews[i] }))
