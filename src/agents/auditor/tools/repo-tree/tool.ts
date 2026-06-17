@@ -4,7 +4,7 @@ import path from "node:path";
 import { tool } from "langchain";
 import { z } from "zod";
 
-import { DOC_BASENAMES, DOC_EXTS, MAX_DEPTH, SKIP_DIRS, SOL_EXT, SOL_TEST_SUFFIXES } from "../config.ts";
+import { DOC_BASENAMES, DOC_EXTS, MAX_DEPTH, SKIP_DIRS, SOL_EXT, SOL_TEST_SUFFIXES } from "../../config.ts";
 
 const CONFIG_FILES = new Set([
   "foundry.toml",
@@ -90,14 +90,11 @@ export const buildRepoTree = (repoPath: string): string => {
   return `${repoName}/\n${renderTree(nodes, "")}`;
 };
 
-export const repoTreeTool = tool(
-  async ({ repoPath }) => buildRepoTree(repoPath),
-  {
-    name: "repo_tree",
-    description:
-      "Walk a repository and return a file-system tree of relevant files tagged by kind: [sol] for auditable Solidity contracts, [test] for Solidity test files, [doc] for documentation, and [config] for project config files. Use this during Define Scope to understand repository layout before selecting which files to audit.",
-    schema: z.object({
-      repoPath: z.string().describe("Absolute path to the repository root."),
-    }),
-  },
-);
+export const repoTreeTool = tool(async ({ repoPath }) => buildRepoTree(repoPath), {
+  name: "repo_tree",
+  description:
+    "Walk a repository and return a file-system tree of relevant files tagged by kind: [sol] for auditable Solidity contracts, [test] for Solidity test files, [doc] for documentation, and [config] for project config files. Use this during Define Scope to understand repository layout before selecting which files to audit.",
+  schema: z.object({
+    repoPath: z.string().describe("Absolute path to the repository root."),
+  }),
+});
