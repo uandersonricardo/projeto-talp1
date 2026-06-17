@@ -1,6 +1,12 @@
 import { StateSchema } from "@langchain/langgraph";
 import { z } from "zod";
 
+export const FileRankingSchema = z.object({
+  filePath: z.string(),
+  importance: z.number().int().min(1).max(5),
+  reasoning: z.string(),
+});
+
 export const CandidateFindingSchema = z.object({
   title: z.string(),
   description: z.string(),
@@ -34,6 +40,7 @@ export const AuditorState = new StateSchema({
   scope: z.array(z.string()).default([]),
   docs: z.array(z.string()).default([]),
   fileTree: z.string().default(""),
+  fileRankings: z.array(FileRankingSchema).default([]),
   repoContext: z.string().default(""),
   candidateFindings: z.array(LocatedFindingSchema).default([]),
   judgeReviews: z.array(JudgeReviewSchema).default([]),
