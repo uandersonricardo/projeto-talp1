@@ -1,0 +1,32 @@
+import fs from "fs/promises";
+import path from "path";
+import { PoCState } from "../state.js";
+
+export async function contextNode(state: PoCState): Promise<Partial<PoCState>> {
+  console.log("[contextNode] Preparando ambiente de testes para:", state.report.title);
+
+  if (state.report.customSandboxDir) {
+    try {
+      const testDir = path.join(state.report.customSandboxDir, "test");
+      const testEntries = await fs.readdir(testDir, { withFileTypes: true }).catch(() => []);
+      let removed = 0;
+      for (const entry of testEntries) {
+        if (entry.isFile() && entry.name.endsWith(".t.sol") && entry.name !== "Exploit.t.sol") {
+          await fs.unlink(path.join(testDir, entry.name));
+          removed++;
+        }
+      }
+      if (removed > 0) {
+        console.log(`[contextNode] Limpos ${removed} arquivos de teste antigos.`);
+      }
+    } catch (e) {
+      console.warn("[contextNode] falha na limpeza do diretório de testes:", (e as Error).message);
+    }
+  }
+
+  return { 
+    templateCode: "", 
+    pocCode: "", 
+    infrastructurePhase: false
+  };
+}

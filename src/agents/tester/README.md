@@ -1,109 +1,60 @@
-# Agente Gerador de PoCs (Tester)
+# PoCo Agent (Proof-of-Concept Agent)
 
-Este agente é responsável por validar vulnerabilidades identificadas pelo **Agente Auditor** através da geração automática de exploits em Solidity (*Proof of Concepts* - PoCs) e execução em um ambiente sandbox utilizando **Foundry**.
+Este diretório contém a implementação principal do **Agente PoCo**, uma arquitetura autônoma baseada no framework **LangGraph**, desenvolvida para atuar como um auditor de segurança e desenvolvedor de exploits (Proof of Concepts) em Smart Contracts.
 
 ## 1. Visão Geral
 
-O agente implementa um **loop ReAct** (Gerar → Executar → Refletir) orquestrado via **LangGraph**. Diferente de abordagens tradicionais, ele utiliza um componente **Oracle** para preparar o scaffold do teste, permitindo que o LLM foque exclusivamente na lógica do exploit.
+O Agente recebe como entrada um relatório de vulnerabilidade (escrito por um auditor humano) e o código-fonte do contrato afetado. O objetivo do agente é explorar iterativamente o ambiente local usando o framework **Foundry** até conseguir escrever um arquivo `Exploit.t.sol` que prove matematicamente que a vulnerabilidade descrita é explorável (roubando fundos, burlando acessos, etc).
 
-### Fluxo Multi-agente
-```mermaid
-graph LR
-    Coder[Agente Gerador] -- "Código Fonte" --> Auditor
-    Auditor[Agente Auditor] -- "Findings (JSON)" --> Tester
-    Tester[Agente de PoCs] -- "PoCResult (Verificado)" --> Final[Projeto Validado]
-```
+Diferente de scripts sequenciais convencionais, este agente emprega um **Loop ReAct** (Raciocínio e Ação) iterativo:
+1. **Lê e entende** o contexto.
+2. **Planeja** uma estratégia de ataque em múltiplos passos.
+3. **Escreve** o código no disco.
+4. **Compila e testa** localmente via terminal.
+5. **Analisa o erro** de compilação ou de lógica e auto-corrige o exploit na próxima iteração.
 
-### Principais Funcionalidades:
-- **Sandbox Autônomo:** O agente detecta e inicializa o ambiente Foundry (`/tmp/poc-sandbox`) automaticamente no primeiro uso.
-- **Scaffold Automático:** Gera o arquivo `Exploit.t.sol` com o contrato vítima já instanciado e financiado.
-- **Loop de Auto-correção:** Se o exploit falhar, o agente analisa os logs e tenta corrigir o código por até 5 iterações.
-- **Integração com DeepSeek:** Utiliza o modelo `deepseek-v4-pro` via OpenRouter.
+## 2. Componentes da Arquitetura
 
-## 2. Arquitetura
+O sistema é orquestrado através de uma Máquina de Estados Finita (Graph) no `graph.ts`, composta por 5 nós fundamentais:
 
-O fluxo de execução segue o grafo definido em `agent.ts`:
+*   **`contextNode`**: Nó de entrada. Carrega o relatório original do auditor e injeta no estado global do agente.
+*   **`routerNode`**: Formata as restrições do ambiente e monta o `System Prompt` que define a persona do LLM.
+*   **`pocoAgentNode`**: O motor cognitivo. Utiliza o modelo de linguagem avançado (ex: Claude 3.5 Sonnet) para raciocinar sobre as falhas e escolher qual ferramenta invocar.
+*   **`pocoToolsNode`**: O executor mecânico das ferramentas. Acessa o FileSystem (`read_file`, `write_file`) e o terminal (`smart_contract_test`, `smart_contract_compile`).
+*   **`trackToolCallsNode`**: Intercepta a saída do teste. Se o teste passar (`Test Passed Successfully!`), ele interrompe o grafo prematuramente definindo o status de `success`. Se falhar, devolve o feedback de erro para o `pocoAgentNode` tentar novamente, até o limite de 30 iterações.
 
-1.  **Oracle Node:** Recebe o relatório de vulnerabilidade e gera o scaffold Solidity inicial.
-2.  **Generate PoC Node:** O LLM completa a função `test_Exploit()` com base no scaffold e na descrição da falha.
-3.  **Run Foundry Node:** Escreve o código no sandbox e executa `forge test`.
-4.  **Reflect Node:** Em caso de falha, analisa o output do Forge, classifica o erro e fornece feedback para o próximo ciclo de geração.
+## 3. Estrutura de Diretórios
 
-## 3. Estrutura de Arquivos
-
-```
+```text
 src/agents/tester/
-├── agent.ts           # Definição do grafo LangGraph e lógica dos nodes
-├── state.ts           # Estado interno do agente (PoCStateAnnotation)
-├── types.ts           # Interfaces de entrada (Finding) e saída (PoCResult)
-├── index.ts           # Entry point público (runPoCGenerator)
-│
-├── tools/
-│   ├── scaffoldGenerator.ts  # Gerador de boilerplate Foundry
-│   └── foundryRunner.ts      # Executor de comandos shell (forge)
-│
-├── prompts/
-│   └── system.ts             # Instruções especializadas para o LLM
-│
-└── utils/
-    ├── extractSolidity.ts    # Parser de blocos de código
-    └── logAnalyzer.ts        # Classificador de erros de execução
+├── index.ts           # Entrypoint da biblioteca, orquestra e dispara o grafo LangGraph.
+├── agent.ts           # Definição e wrapper do agente para integração externa.
+├── graph.ts           # A topologia da rede ReAct (nodes e edges).
+├── state.ts           # Interface de Estado global que trafega entre os nós do grafo.
+├── types.ts           # Tipagens TypeScript (Report, Vulnerability, etc).
+├── tools/             # (Depreciado) Ferramentas antigas de suporte.
+├── utils/             # Scripts utilitários e stubs de dependências.
+└── nodes/
+    ├── context.ts     # Setup inicial e parser do contexto.
+    ├── router.ts      # Montagem do prompt base.
+    └── pocoAgent.ts   # Chamada direta à API do LLM com as Tools associadas.
 ```
 
-## 4. Integração e Uso
+## 4. Como Executar
 
-### Fluxo de Dados (Input/Output)
+O agente não é chamado isoladamente pelo usuário, mas sim invocado pelo orquestrador principal de Benchmark ou pela CLI da ferramenta. Para avaliar a eficácia do agente, recomenda-se executar os scripts do Benchmark na raiz do projeto:
 
-O agente recebe um objeto `VulnerabilityReport`. Como o **Agente Auditor** gera objetos do tipo `Finding`, é necessário realizar um mapeamento (veja `src/index.ts` para o adapter).
-
-#### Estrutura de Entrada (`VulnerabilityReport`)
-```typescript
-interface VulnerabilityReport {
-  id: string;               // Identificador único do report
-  severity: string;         // "high", "medium", "low"
-  title: string;            // Título curto da falha
-  description: string;      // Descrição técnica detalhada
-  affectedContract: {
-    name: string;           // Nome da classe do contrato
-    sourceCode: string;     // Código-fonte completo (Solidity)
-  };
-  attackVector: string;     // Descrição do caminho de ataque
-  exploitablePaths?: string[]; // (Opcional) Passos detalhados
-}
+```bash
+# Executa a avaliação em cima do dataset Hard (Proof-of-Patch)
+DEBUG_CONTEXT=true FORCE_RERUN=true npx tsx src/benchmark/runTesterBenchmark.ts 100
 ```
 
-#### Estrutura de Saída (`PoCResult`)
-```typescript
-interface PoCResult {
-  reportId: string;
-  status: "success" | "failed" | "timeout";
-  solidityCode: string;    // Conteúdo final do Exploit.t.sol
-  executionLogs: string[]; // Logs brutos de todas as iterações
-  iterations: number;      // Total de tentativas realizadas
-}
-```
+## 5. Ferramentas (Tools)
 
-### Exemplo de Integração
-```typescript
-import { runPoCGenerator } from "./src/agents/tester";
+A maestria do agente vem de seu arsenal de ferramentas (`tools.ts`), que operam com alta precisão cirúrgica para economizar tokens:
+*   `read_file`, `list_dir`: Explorar a árvore de contratos vulneráveis.
+*   `todo_planner`: Criar uma lista de tarefas persistente para orientar a memória de longo prazo durante as 30 iterações.
+*   `write_file`, `edit_file`: Gerar ou alterar partes específicas do exploit de forma isolada.
+*   `smart_contract_compile`, `smart_contract_test`: Interagir diretamente com a CLI do `forge` para compilar ou rodar os testes, com os logs canalizados de volta para o agente.
 
-// O orquestrador mapeia o Finding + Código Fonte para o Report
-const result = await runPoCGenerator(report);
-```
-
-### Pré-requisitos
-- **Foundry:** `forge` deve estar instalado e acessível. O agente busca em `~/.foundry/bin` e no PATH padrão.
-- **API Key:** `OPENROUTER_API_KEY` deve estar configurada no arquivo `.env`.
-
-## 5. Avaliação de Resultados
-
-O `PoCResult` retorna um status que indica a validade da vulnerabilidade ou a eficácia de um patch:
-
-| Status | Significado | Ação Recomendada |
-| :--- | :--- | :--- |
-| **`success`** | Exploit executou e passou na assertion. | Vulnerabilidade confirmada. |
-| **`failed`** | Exploit falhou após 5 tentativas. | Verificar `executionLogs` para erro de lógica ou compilação. |
-| **`timeout`** | Forge excedeu 60 segundos. | Possível loop infinito no contrato ou exploit. |
-
-## 6. Base Acadêmica
-A implementação deste agente foi inspirada no framework **PoCo** (Bergman et al., KTH 2025), adaptada para execução local determinística e suporte multi-agente.
+> **Nota Metodológica:** O agente assume que está operando em um repositório configurado e funcional. Se as dependências do repositório alvo (ex: submódulos do foundry) estiverem quebradas ou faltantes fisicamente no disco, o agente tentará alucinar "Mocks" arquiteturais para forçar o projeto a compilar, o que foge do escopo do teste da vulnerabilidade. Sempre garanta que o projeto alvo passa por um `forge build` limpo antes de submetê-lo à auditoria.

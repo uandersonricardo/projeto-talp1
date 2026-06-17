@@ -206,8 +206,8 @@ async function main() {
       continue;
     }
 
-    const allowedIds = ["008", "020", "041", "054", "070", "077"];
-    if (!allowedIds.includes(id)) {
+    const targetIds = ["020"];
+    if (!targetIds.includes(id)) {
       continue;
     }
 

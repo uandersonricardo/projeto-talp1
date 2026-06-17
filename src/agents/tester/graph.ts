@@ -1,8 +1,7 @@
 import { StateGraph, END, START } from "@langchain/langgraph";
 import { ToolNode } from "@langchain/langgraph/prebuilt";
 import { PoCStateAnnotation, PoCState } from "./state.js";
-import { oracleNode } from "./nodes/oracle.js";
-import { routerNode } from "./nodes/router.js";
+import { contextNode } from "./nodes/context.js";
 import { pocoAgentNode } from "./nodes/pocoAgent.js";
 import { pocoTools } from "./tools.js";
 
@@ -54,15 +53,13 @@ function routeAfterTools(state: PoCState): "pocoAgentNode" | typeof END {
 }
 
 const graphBuilder = new StateGraph(PoCStateAnnotation)
-  .addNode("oracleNode", oracleNode)
-  .addNode("routerNode", routerNode)
+  .addNode("contextNode", contextNode)
   .addNode("pocoAgentNode", pocoAgentNode)
   .addNode("pocoToolsNode", pocoToolsNode)
   .addNode("trackToolCallsNode", trackToolCallsNode)
   
-  .addEdge(START, "oracleNode")
-  .addEdge("oracleNode", "routerNode")
-  .addEdge("routerNode", "pocoAgentNode")
+  .addEdge(START, "contextNode")
+  .addEdge("contextNode", "pocoAgentNode")
   
   // ReAct Loop Routing
   .addConditionalEdges("pocoAgentNode", routeAfterAgent, {

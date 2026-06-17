@@ -1,14 +1,9 @@
 import { Annotation } from "@langchain/langgraph";
 import { BaseMessage } from "@langchain/core/messages";
-import { VulnerabilityReport, OracleContext } from "./types.js";
+import { VulnerabilityReport } from "./types.js";
 
 export const PoCStateAnnotation = Annotation.Root({
   report: Annotation<VulnerabilityReport>(),
-
-  oracleContext: Annotation<OracleContext | null>({
-    default: () => null,
-    reducer: (_, y) => y,           // overwrite — filled once by oracleNode
-  }),
 
   pocCode: Annotation<string>({
     default: () => "",
@@ -23,11 +18,6 @@ export const PoCStateAnnotation = Annotation.Root({
   exploitBody: Annotation<string>({
     default: () => "",
     reducer: (_, y) => y,           // overwrite — only the hack logic
-  }),
-
-  vulnerabilityCategory: Annotation<string>({
-    default: () => "",
-    reducer: (_, y) => y,           // overwrite
   }),
 
   infrastructurePhase: Annotation<boolean>({
