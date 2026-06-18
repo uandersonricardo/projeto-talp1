@@ -1,0 +1,48 @@
+{
+  "summary": {
+    "timestamp": "2026-06-16T21:50:28.207Z",
+    "total_processed": 6,
+    "reproducibility_rate": 50,
+    "specificity_rate": 100,
+    "overall_ground_truth_rate": 50,
+    "average_iterations": 13.333333333333334
+  },
+  "details": [
+    {
+      "id": "008",
+      "reproducible": false,
+      "specific": false,
+      "iterations": 30
+    },
+    {
+      "id": "020",
+      "reproducible": true,
+      "specific": true,
+      "iterations": 9
+    },
+    {
+      "id": "041",
+      "reproducible": false,
+      "specific": false,
+      "iterations": 13
+    },
+    {
+      "id": "054",
+      "reproducible": true,
+      "specific": true,
+      "iterations": 7
+    },
+    {
+      "id": "070",
+      "reproducible": false,
+      "specific": false,
+      "iterations": 13
+    },
+    {
+      "id": "077",
+      "reproducible": true,
+      "specific": true,
+      "iterations": 8
+    }
+  ]
+}

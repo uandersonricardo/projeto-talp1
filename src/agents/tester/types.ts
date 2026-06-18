@@ -21,18 +21,20 @@ export interface VulnerabilityReport {
   description: string;
   affectedContract: {
     name: string;
-    sourceCode: string;  // Solidity completo, preferencialmente flattened
+    sourceCode: string;
+    sourceFilePath?: string;
   };
   attackVector: string;
   suggestedCheatcodes?: string[];
   codeSnippet?: string;
   location?: string;
   exploitablePaths?: string[];
+  customSandboxDir?: string; // Caminho para execução do Forge (opcional)
+  referenceTestCode?: string; // Código de um teste existente para referência de setup
+  patchDiff?: string; // Unified diff of the patch (vulnerable vs patched) for specificity guidance
 }
 
-export interface OracleContext {
-  solidityScaffold: string;  // Exploit.t.sol parcial com setUp() pronto
-}
+
 
 export interface PoCResult {
   reportId: string;

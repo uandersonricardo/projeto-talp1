@@ -10,6 +10,7 @@ import { testerAgent } from "./agents/tester/agent.js";
 import { logger } from "./logger.js";
 import type { VulnerabilityReport, Finding } from "./agents/tester/types.js";
 import { mapFindingToReport } from "./utils/mapFinding.js";
+import { createEmptyFoundryProject } from "./utils/forgeSandbox.js";
 
 const inputPath = process.argv[2];
 
@@ -48,10 +49,24 @@ if (auditorResult.findings.length > 0) {
   const report = mapFindingToReport(finding, coderResult.contract);
 
   console.log("\n======= Tester =======");
-  const testerResult = await testerAgent.invoke({ report });
+  
+  // Create isolated Foundry Sandbox for the End-to-End run
+  const sandboxDir = resolve(__dirname, "agents/tester/temp_e2e_run");
+  await createEmptyFoundryProject(sandboxDir, coderResult.contract, "Contract");
+  
+  // Attach sandboxDir to report metadata (so the agent knows where it is)
+  report.customSandboxDir = sandboxDir;
+
+  const testerResult = await testerAgent.invoke(
+    { report }, 
+    { 
+      recursionLimit: 100,
+      configurable: { sandboxDir }
+    }
+  ) as any;
 
   console.log("Status:", testerResult.status);
-  console.log("Iterations:", testerResult.iterations);
+  console.log("Iterations:", testerResult.toolCallCount || 0);
 } else {
   console.log("\n======= Tester =======");
   console.log("Nenhuma vulnerabilidade encontrada pelo Auditor.");
