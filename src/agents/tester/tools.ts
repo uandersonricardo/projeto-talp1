@@ -186,7 +186,7 @@ export const smartContractCompileTool = tool(
         { 
           cwd: sandboxDir, 
           timeout: 30000,
-          env: { ...process.env, PATH: `${process.env.HOME}/.foundry/bin:${process.env.PATH}` } 
+          env: { ...process.env } 
         }
       );
       
@@ -220,7 +220,7 @@ export const smartContractTestTool = tool(
         { 
           cwd: sandboxDir, 
           timeout: 60000,
-          env: { ...process.env, PATH: `${process.env.HOME}/.foundry/bin:${process.env.PATH}` } 
+          env: { ...process.env } 
         }
       );
       

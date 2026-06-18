@@ -27,8 +27,12 @@ function routeAfterAgent(state: PoCState): "pocoToolsNode" | typeof END {
   return END;
 }
 
+import { emitStep } from "../../logger.js";
+
 // A simple node to update the toolCallCount after tools run
 function trackToolCallsNode(state: PoCState): Partial<PoCState> {
+  emitStep({ agent: "tester", step: "run", status: "running" });
+
   const messages = state.messages;
   const lastMessage = messages[messages.length - 1];
   
@@ -37,6 +41,11 @@ function trackToolCallsNode(state: PoCState): Partial<PoCState> {
     if (typeof lastMessage.content === "string" && lastMessage.content.includes("Test Passed Successfully!")) {
       newStatus = "success";
     }
+  }
+
+  if (newStatus === "success") {
+    emitStep({ agent: "tester", step: "run", status: "done" });
+    emitStep({ agent: "tester", step: "gen", status: "done" });
   }
 
   return {

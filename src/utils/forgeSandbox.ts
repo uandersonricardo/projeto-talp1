@@ -6,7 +6,7 @@ export async function createEmptyFoundryProject(targetDir: string, sourceCode: s
   await fs.mkdir(targetDir, { recursive: true });
   execSync("forge init --no-git --force", { 
     cwd: targetDir,
-    env: { ...process.env, PATH: `${process.env.PATH}:/home/tales/.foundry/bin` }
+    env: { ...process.env } // Deixa o PATH nativo agir (configurado pelo bash ou Dockerfile)
   });
   
   // Clean up default files

@@ -2,6 +2,7 @@ import { HumanMessage, SystemMessage, AIMessage, trimMessages } from "@langchain
 import { PoCState } from "../state.js";
 import { pocoTools } from "../tools.js";
 import { createLLM } from "../../../config/llm.js";
+import { emitStep } from "../../../logger.js";
 
 const MAX_STEPS = 30; // Max tool calls threshold
 const MAX_COST_USD = 3.0; // Max cost threshold
@@ -43,6 +44,7 @@ function calculateCost(inputTokens: number, outputTokens: number): number {
 }
 
 export async function pocoAgentNode(state: PoCState): Promise<Partial<PoCState>> {
+  emitStep({ agent: "tester", step: "gen", status: "running" });
   let messages = state.messages || [];
 
   // Check limits
@@ -126,8 +128,9 @@ export async function pocoAgentNode(state: PoCState): Promise<Partial<PoCState>>
   }
 
   return {
-    messages: [...initialMessages, response],
+    messages: [response],
     totalCost: runCost,
-    iterations: 1, // Add 1 to total iterations tracking
+    toolCallCount: 1, // Reducer is additive
+    iterations: 1, // Reducer is additive
   };
 }

@@ -1,6 +1,7 @@
 import fs from "fs/promises";
 import path from "path";
 import { PoCState } from "../state.js";
+import { logger } from "../../../logger.js";
 
 export async function contextNode(state: PoCState): Promise<Partial<PoCState>> {
   console.log("[contextNode] Preparando ambiente de testes para:", state.report.title);

@@ -38,9 +38,9 @@ function appendCsvRow(row: string[]) {
 async function runEvaluation() {
   const cases = await parseJSONL(JSONL_FILE);
   
-  // Only evaluate 10 hard cases to match the amount of easy/intermediate cases
-  const targetCases = cases.filter(c => c.complexity === "hard").slice(0, 10);
-  console.log(`Iniciando avaliação para ${targetCases.length} projetos sintéticos difíceis...`);
+  // Roda a avaliação para os datasets easy e intermediate a pedido do usuário
+  const targetCases = cases.filter(c => c.complexity === "easy" || c.complexity === "intermediate");
+  console.log(`Iniciando avaliação para ${targetCases.length} projetos sintéticos (easy/intermediate)...`);
 
   const csvHeaders = [
     "Task_ID",

@@ -37,10 +37,8 @@ export const INITIAL_AGENT_STATES: AgentState[] = [
     color: "#3fb950",
     status: "pending",
     steps: [
-      { id: "test.oracle", label: "Preparando scaffold", status: "pending" },
-      { id: "test.gen", label: "Gerando PoC", status: "pending" },
-      { id: "test.run", label: "Executando Foundry", status: "pending" },
-      { id: "test.reflect", label: "Analisando falha", status: "pending" },
+      { id: "test.gen", label: "Codificando PoC (LLM)", status: "pending" },
+      { id: "test.run", label: "Executando Sandbox (Ferramentas)", status: "pending" },
     ],
   },
 ];
