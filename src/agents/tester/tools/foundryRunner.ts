@@ -3,7 +3,9 @@ import { promisify } from "util";
 import { writeFile, access } from "fs/promises";
 import { join } from "path";
 
-const execAsync  = promisify(exec);
+import { logger } from "../../../logger.ts";
+
+const execAsync = promisify(exec);
 const DEFAULT_SANDBOX = process.env.SANDBOX_DIR || "/tmp/poc-sandbox";
 const TIMEOUT_MS = 60_000;
 
@@ -22,7 +24,7 @@ async function ensureSandbox(sandboxDir: string) {
   try {
     await access(join(sandboxDir, "foundry.toml"));
   } catch {
-    console.log(`[foundryRunner] Sandbox em ${sandboxDir} não encontrado. Inicializando...`);
+    logger.info(`[Tester] foundryRunner: Sandbox em ${sandboxDir} não encontrado. Inicializando...`);
     // Caminho absoluto para o script de setup (assume execução da raiz do projeto)
     await execAsync("./scripts/setup-sandbox.sh", { env: { ...process.env, SANDBOX_DIR: sandboxDir } });
   }
@@ -30,7 +32,7 @@ async function ensureSandbox(sandboxDir: string) {
 
 export async function runFoundry(solidityCode: string, sandboxDir: string = DEFAULT_SANDBOX): Promise<FoundryResult> {
   await ensureSandbox(sandboxDir);
-  
+
   // Ensure test directory exists
   const testDir = join(sandboxDir, "test");
   try {
@@ -38,20 +40,17 @@ export async function runFoundry(solidityCode: string, sandboxDir: string = DEFA
   } catch {
     await execAsync(`mkdir -p "${testDir}"`);
   }
-  
+
   // Escrever o arquivo no sandbox
   const testPath = join(testDir, "Exploit.t.sol");
   await writeFile(testPath, solidityCode, "utf-8");
 
   try {
-    const { stdout, stderr } = await execAsync(
-      "forge test --match-contract ExploitTest -vvvv",
-      { 
-        cwd: sandboxDir, 
-        timeout: TIMEOUT_MS, 
-        env: { ...process.env, PATH: `${process.env.HOME}/.foundry/bin:${process.env.PATH}` } 
-      }
-    );
+    const { stdout, stderr } = await execAsync("forge test --match-contract ExploitTest -vvvv", {
+      cwd: sandboxDir,
+      timeout: TIMEOUT_MS,
+      env: { ...process.env, PATH: `${process.env.HOME}/.foundry/bin:${process.env.PATH}` },
+    });
     return {
       exitCode: 0,
       stdout,

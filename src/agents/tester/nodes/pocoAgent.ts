@@ -2,7 +2,7 @@ import { HumanMessage, SystemMessage, AIMessage, trimMessages } from "@langchain
 import { PoCState } from "../state.js";
 import { pocoTools } from "../tools.js";
 import { createLLM } from "../../../config/llm.js";
-import { emitStep } from "../../../logger.js";
+import { logger, emitStep } from "../../../logger.js";
 
 const MAX_STEPS = 30; // Max tool calls threshold
 const MAX_COST_USD = 3.0; // Max cost threshold
@@ -67,63 +67,66 @@ export async function pocoAgentNode(state: PoCState): Promise<Partial<PoCState>>
     const sandboxDir = state.report.customSandboxDir || process.cwd();
     const targetFile = state.report.affectedContract.sourceFilePath || state.report.affectedContract.name;
     const desc = state.report.description || state.report.title;
-    
+
     // Original PoCo prompt
     const taskPrompt = `Create a vulnerability exposing PoC forge test for the vulnerable contract at ${targetFile} using the vulnerability description: ${desc}. Use the write_file tool to save your PoC code to test/Exploit.t.sol. Write ONLY the test file, test ONLY the described vulnerability, and do NOT modify the original contract. Iterate on compilation, test, and logical errors using the smart_contract_compile and smart_contract_test tools. You are done when the test compiles and successfully demonstrates the vulnerability through passing assertions. Note: your execution sandbox is ${sandboxDir}. Ensure all commands target this directory.`;
 
-    initialMessages = [
-      new SystemMessage(POCO_SYSTEM_PROMPT),
-      new HumanMessage(taskPrompt)
-    ];
+    initialMessages = [new SystemMessage(POCO_SYSTEM_PROMPT), new HumanMessage(taskPrompt)];
     messages = initialMessages;
   }
 
   // Invoke model
-  console.log(`[pocoAgent] Invoking model (Steps: ${state.toolCallCount}/${MAX_STEPS}, Cost: $${state.totalCost.toFixed(2)})...`);
-  let response;
+  logger.info(
+    `[Tester] pocoAgent: Invoking model (Steps: ${state.toolCallCount}/${MAX_STEPS}, Cost: $${state.totalCost.toFixed(2)})...`,
+  );
+  let response: any;
   let runCost = 0;
-  
+
   let attempts = 0;
   while (attempts < 3) {
     try {
       const trimmedMessages = await trimMessages(messages, {
         maxTokens: 100000,
         strategy: "last",
-        tokenCounter: (msgs) => msgs.map(m => m.content ? m.content.toString().length / 4 : 0).reduce((a, b) => a + b, 0),
+        tokenCounter: (msgs) =>
+          msgs.map((m) => (m.content ? m.content.toString().length / 4 : 0)).reduce((a, b) => a + b, 0),
         includeSystem: true,
         allowPartial: false,
       });
 
       response = await model.invoke(trimmedMessages, {
-        configurable: { sandboxDir: state.report.customSandboxDir || process.cwd() }
+        configurable: { sandboxDir: state.report.customSandboxDir || process.cwd() },
       });
-      
+
       if (process.env.DEBUG_CONTEXT === "true") {
-        console.log(`\n--- Agent Response [Step ${state.toolCallCount}] ---`);
-        console.log(response.content);
+        logger.debug(`[Tester]\n--- Agent Response [Step ${state.toolCallCount}] ---`);
+        logger.debug(response.content);
         if (response.tool_calls) {
-          console.log("Tool Calls:", JSON.stringify(response.tool_calls, null, 2));
+          logger.debug(`[Tester] Tool Calls: ${JSON.stringify(response.tool_calls, null, 2)}`);
         }
       }
-      
+
       // Calculate costs
       if (response.response_metadata?.tokenUsage) {
         const usage: any = response.response_metadata.tokenUsage;
-        runCost = calculateCost(usage.promptTokens || usage.input_tokens || usage.prompt_tokens || 0, usage.completionTokens || usage.output_tokens || usage.completion_tokens || 0);
+        runCost = calculateCost(
+          usage.promptTokens || usage.input_tokens || usage.prompt_tokens || 0,
+          usage.completionTokens || usage.output_tokens || usage.completion_tokens || 0,
+        );
       }
       break; // Success, exit retry loop
     } catch (err: any) {
       attempts++;
-      console.log(`[pocoAgent] API Error (attempt ${attempts}): ${err.message}`);
+      logger.warn(`[Tester] pocoAgent: API Error (attempt ${attempts}): ${err.message}`);
       if (attempts >= 3) {
         return {
           messages: [new HumanMessage(`Model API Error after 3 attempts: ${err.message}.`)],
           status: "failed",
-          lastError: err.message
+          lastError: err.message,
         };
       }
       // Wait 10 seconds before retrying (in case of strict rate limits)
-      await new Promise(r => setTimeout(r, 10000));
+      await new Promise((r) => setTimeout(r, 10000));
     }
   }
 

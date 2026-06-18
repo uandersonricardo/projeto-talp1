@@ -1,10 +1,11 @@
 import fs from "fs/promises";
 import path from "path";
+
 import { PoCState } from "../state.js";
 import { logger } from "../../../logger.js";
 
 export async function contextNode(state: PoCState): Promise<Partial<PoCState>> {
-  console.log("[contextNode] Preparando ambiente de testes para:", state.report.title);
+  logger.info(`[Tester] contextNode: Preparando ambiente de testes para: ${state.report.title}`);
 
   if (state.report.customSandboxDir) {
     try {
@@ -18,16 +19,16 @@ export async function contextNode(state: PoCState): Promise<Partial<PoCState>> {
         }
       }
       if (removed > 0) {
-        console.log(`[contextNode] Limpos ${removed} arquivos de teste antigos.`);
+        logger.info(`[Tester] contextNode: Limpos ${removed} arquivos de teste antigos.`);
       }
     } catch (e) {
-      console.warn("[contextNode] falha na limpeza do diretório de testes:", (e as Error).message);
+      logger.warn(`[Tester] contextNode: falha na limpeza do diretório de testes: ${(e as Error).message}`);
     }
   }
 
-  return { 
-    templateCode: "", 
-    pocCode: "", 
-    infrastructurePhase: false
+  return {
+    templateCode: "",
+    pocCode: "",
+    infrastructurePhase: false,
   };
 }
